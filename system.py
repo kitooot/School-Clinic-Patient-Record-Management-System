@@ -4,6 +4,7 @@ import os
 import ttkthemes
 from tkinter import ttk, messagebox, filedialog
 import pymysql
+from pymysql.err import IntegrityError
 import pandas
 import customtkinter as ctk
 from PIL import ImageTk, Image
@@ -24,8 +25,10 @@ SIDEBAR_SIDE = 'left'
 
 
 def Export_data():
-    url = filedialog.asksaveasfilename(defaultextension= '.csv')
-    indexing =  patient_table.get_children()
+    url = filedialog.asksaveasfilename(defaultextension='.csv')
+    if not url:
+        return
+    indexing = patient_table.get_children()
     new_list = []
     for index in indexing:
         content = patient_table.item(index)
@@ -37,7 +40,7 @@ def Export_data():
     ])
     table.to_csv(url, index=False)
     messagebox.showinfo('Success', 'Data is saved')
-    
+
 
 def _populate_table(rows):
     """Refresh treeview content and apply alternating row colors."""
@@ -45,156 +48,197 @@ def _populate_table(rows):
     for index, row in enumerate(rows):
         tag = 'evenrow' if index % 2 == 0 else 'oddrow'
         patient_table.insert('', END, values=row, tags=(tag,))
-    
+
+
 def Get_previous_dob():
-    # Fetch the current selected patient's data
     indexing = patient_table.focus()
+    if not indexing:
+        return ''
     content = patient_table.item(indexing)
     list_data = content['values']
-    # Extract the current DOB information
-    previous_dob = list_data[6]  # Assuming DOB is at index 6
+    if len(list_data) <= 6:
+        return ''
+    previous_dob = list_data[6]
     return previous_dob
 
+
 def Update_patient():
-    def Update_data():
-        combined_date = f"{bdayMonthEntry.get()}/{bdayDateEntry.get()}/{bdayYearEntry.get()}"
-        query = (
-            'update patient set name=%s, mobile=%s, email=%s, address=%s, gender=%s, dob=%s, diagnosis=%s, ward=%s, visit_date=%s '
-            'where patient_id=%s'
-        )
-        # combine address parts into one string for storage
-        combined_address = f"{addressEntry.get()}, {barangayEntry.get()}, {cityEntry.get()}, {provinceEntry.get()}"
-        mycursor.execute(query, (
-            nameEntry.get(), mobileEntry.get(), emaileEntry.get(), combined_address, genderVar.get(), combined_date,
-            diagnosisEntry.get(), wardEntry.get(), date, patientIdEntry.get()
-        ))
-        con.commit()
-        messagebox.showinfo('Success', f'Patient ID {patientIdEntry.get()} is updated successfully')
-        update_window.destroy()
-        Show_patient()
+    selection = patient_table.focus()
+    if not selection:
+        messagebox.showerror('Error', 'Please select a patient to update.')
+        return
+
+    content = patient_table.item(selection)
+    list_data = content.get('values', [])
+    if not list_data:
+        messagebox.showerror('Error', 'Unable to read the selected patient data.')
+        return
+
+    patient_id = list_data[0]
 
     update_window = ctk.CTkToplevel()
     update_window.title('Update Patient')
     update_window.grab_set()
     update_window.resizable(False, False)
-    patientIdLabel = ctk.CTkLabel(update_window, text='Patient ID', font=('times new roman', 20, 'bold'))
-    patientIdLabel.grid(row= 0, column= 0, padx= 30, pady= 15, sticky=W)
-    patientIdEntry = ctk.CTkEntry(update_window, font=('times new roman', 15, 'bold'))
-    patientIdEntry.grid(row= 0, column= 1, padx= 15, pady=10)
+    update_window.configure(fg_color=ACCENT)
 
-    nameLabel = ctk.CTkLabel(update_window, text='Name', font=('times new roman', 20, 'bold'))
-    nameLabel.grid(row= 1, column= 0, padx= 30, pady= 15, sticky=W)
-    nameEntry = ctk.CTkEntry(update_window, font=('times new roman', 15, 'bold'))
-    nameEntry.grid(row= 1, column= 1, padx= 15, pady=10)
+    form_container = ctk.CTkFrame(update_window, fg_color=CARD_BG, corner_radius=18)
+    form_container.grid(row=0, column=0, padx=26, pady=24)
+    form_container.grid_columnconfigure(0, weight=0)
+    form_container.grid_columnconfigure(1, weight=1)
 
-    mobileLabel = ctk.CTkLabel(update_window, text='Mobile No.', font=('times new roman', 20, 'bold'))
-    mobileLabel.grid(row= 2, column= 0, padx= 30, pady= 15, sticky=W)
-    mobileEntry = ctk.CTkEntry(update_window, font=('times new roman', 15, 'bold'))
-    mobileEntry.grid(row= 2, column= 1, padx= 15, pady=10)
+    patientIdLabel = ctk.CTkLabel(form_container, text='Patient ID', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    patientIdLabel.grid(row=0, column=0, padx=(24, 16), pady=(18, 8), sticky=W)
+    patientIdEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13), state='disabled')
+    patientIdEntry.grid(row=0, column=1, padx=(0, 24), pady=(18, 8), sticky='ew')
 
-    emailLabel = ctk.CTkLabel(update_window, text='Email', font=('times new roman', 20, 'bold'))
-    emailLabel.grid(row= 3, column= 0, padx= 30, pady= 15, sticky=W)
-    emaileEntry = ctk.CTkEntry(update_window, font=('times new roman', 15, 'bold'))
-    emaileEntry.grid(row= 3, column= 1, padx= 15, pady=10)
+    nameLabel = ctk.CTkLabel(form_container, text='Name', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    nameLabel.grid(row=1, column=0, padx=(24, 16), pady=8, sticky=W)
+    nameEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    nameEntry.grid(row=1, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    addressLabel = ctk.CTkLabel(update_window, text='Address', font=('times new roman', 20, 'bold'))
-    addressLabel.grid(row= 4, column= 0, padx= 30, pady= 15, sticky=W)
-    addressEntry = ctk.CTkEntry(update_window, font=('times new roman', 15, 'bold'))
-    addressEntry.grid(row= 4, column= 1, padx= 15, pady=10)
+    mobileLabel = ctk.CTkLabel(form_container, text='Mobile No.', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    mobileLabel.grid(row=2, column=0, padx=(24, 16), pady=8, sticky=W)
+    mobileEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    mobileEntry.grid(row=2, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    # Additional address fields: Barangay, City, Province (placed on separate rows)
-    barangayLabel = ctk.CTkLabel(update_window, text='Barangay', font=('times new roman', 16, 'bold'))
-    barangayLabel.grid(row=5, column=0, padx=30, pady=10, sticky=W)
-    barangayEntry = ctk.CTkEntry(update_window, font=('times new roman', 14, 'bold'))
-    barangayEntry.grid(row=5, column=1, padx=15, pady=10)
+    emailLabel = ctk.CTkLabel(form_container, text='Email', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    emailLabel.grid(row=3, column=0, padx=(24, 16), pady=8, sticky=W)
+    emaileEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    emaileEntry.grid(row=3, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    cityLabel = ctk.CTkLabel(update_window, text='City', font=('times new roman', 16, 'bold'))
-    cityLabel.grid(row=6, column=0, padx=30, pady=10, sticky=W)
-    cityEntry = ctk.CTkEntry(update_window, font=('times new roman', 14, 'bold'))
-    cityEntry.grid(row=6, column=1, padx=15, pady=10)
+    addressLabel = ctk.CTkLabel(form_container, text='Street Address', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    addressLabel.grid(row=4, column=0, padx=(24, 16), pady=8, sticky=W)
+    addressEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    addressEntry.grid(row=4, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    provinceLabel = ctk.CTkLabel(update_window, text='Province', font=('times new roman', 16, 'bold'))
-    provinceLabel.grid(row=7, column=0, padx=30, pady=10, sticky=W)
-    provinceEntry = ctk.CTkEntry(update_window, font=('times new roman', 14, 'bold'))
-    provinceEntry.grid(row=7, column=1, padx=15, pady=10)
+    barangayLabel = ctk.CTkLabel(form_container, text='Barangay', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    barangayLabel.grid(row=5, column=0, padx=(24, 16), pady=8, sticky=W)
+    barangayEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    barangayEntry.grid(row=5, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    genderLabel = ctk.CTkLabel(update_window, text='Gender', font=('times new roman', 20, 'bold'))
-    genderLabel.grid(row= 8, column= 0, padx= 30, pady= 15, sticky=W)
+    cityLabel = ctk.CTkLabel(form_container, text='City', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    cityLabel.grid(row=6, column=0, padx=(24, 16), pady=8, sticky=W)
+    cityEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    cityEntry.grid(row=6, column=1, padx=(0, 24), pady=8, sticky='ew')
+
+    provinceLabel = ctk.CTkLabel(form_container, text='Province', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    provinceLabel.grid(row=7, column=0, padx=(24, 16), pady=8, sticky=W)
+    provinceEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    provinceEntry.grid(row=7, column=1, padx=(0, 24), pady=8, sticky='ew')
+
+    genderLabel = ctk.CTkLabel(form_container, text='Gender', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    genderLabel.grid(row=8, column=0, padx=(24, 16), pady=8, sticky=W)
     genderOptions = ['Male', 'Female', 'Other']
     genderVar = StringVar(update_window)
-    genderVar.set(genderOptions[0])  # Default value
+    genderDropdown = ctk.CTkOptionMenu(form_container, values=genderOptions, variable=genderVar, font=('Segoe UI', 13))
+    genderDropdown.grid(row=8, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    genderDropdown = OptionMenu(update_window, genderVar, *genderOptions)
-    genderDropdown.config(width=15, font=('times new roman', 15, 'bold'))
-    genderDropdown.grid(row=5, column=1, padx=15, pady=10)
-    
-    bdayLabel = ctk.CTkLabel(update_window, text='Date of Birth', font=('times new roman', 20, 'bold'))
-    bdayLabel.grid(row= 9, column= 0, padx= 30, pady= 15, sticky=W)
-    # Dropdown menu for month
+    bdayLabel = ctk.CTkLabel(form_container, text='Date of Birth', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    bdayLabel.grid(row=9, column=0, padx=(24, 16), pady=8, sticky=W)
+
     months = [str(i) for i in range(1, 13)]
-    bdayMonthEntry = ttk.Combobox(update_window, values=months, font=('times new roman', 15, 'bold'), width=15, state="readonly")
-    bdayMonthEntry.grid(row=9, column=1, padx=0, pady=10)
-    bdayMonthEntry.set("Month")  # Set default value
+    dates = [str(i) for i in range(1, 32)]
+    years = [str(i) for i in range(1990, 2031)]
 
-    # Dropdown menu for date (1 to 31)
-    datee = [str(i) for i in range(1, 32)]
-    bdayDateEntry = ttk.Combobox(update_window, values=datee, font=('times new roman', 15, 'bold'), width=15, state="readonly")
-    bdayDateEntry.grid(row=9, column=2, padx=0, pady=10)
-    bdayDateEntry.set("Day")  # Set default value
+    dob_frame = ctk.CTkFrame(form_container, fg_color='transparent')
+    dob_frame.grid(row=9, column=1, padx=(0, 24), pady=8, sticky='ew')
+    dob_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
-    year = [str(i) for i in range(2000, 2023)]
-    bdayYearEntry = ttk.Combobox(update_window, values=year, font=('times new roman', 15, 'bold'), width=15, state="readonly")
-    bdayYearEntry.grid(row=9, column=3, padx=0, pady=10)
-    bdayYearEntry.set("Year")  # Set default value
+    bdayMonthEntry = ctk.CTkComboBox(dob_frame, values=months, font=('Segoe UI', 12), state='readonly', width=80)
+    bdayMonthEntry.grid(row=0, column=0, padx=2)
+    bdayMonthEntry.set('Month')
 
-    diagnosisLabel = ctk.CTkLabel(update_window, text='Diagnosis', font=('times new roman', 20, 'bold'))
-    diagnosisLabel.grid(row= 10, column= 0, padx= 30, pady= 15, sticky=W)
-    diagnosisEntry = ctk.CTkEntry(update_window, font=('times new roman', 15, 'bold'))
-    diagnosisEntry.grid(row= 10, column= 1, padx= 15, pady=10)
+    bdayDateEntry = ctk.CTkComboBox(dob_frame, values=dates, font=('Segoe UI', 12), state='readonly', width=80)
+    bdayDateEntry.grid(row=0, column=1, padx=2)
+    bdayDateEntry.set('Day')
 
-    wardLabel = ctk.CTkLabel(update_window, text='Ward', font=('times new roman', 20, 'bold'))
-    wardLabel.grid(row= 11, column= 0, padx= 30, pady= 15, sticky=W)
-    wardEntry = ctk.CTkEntry(update_window, font=('times new roman', 15, 'bold'))
-    wardEntry.grid(row= 11, column= 1, padx= 15, pady=10)
+    bdayYearEntry = ctk.CTkComboBox(dob_frame, values=years, font=('Segoe UI', 12), state='readonly', width=90)
+    bdayYearEntry.grid(row=0, column=2, padx=2)
+    bdayYearEntry.set('Year')
 
-    update_stud_button = ctk.CTkButton(update_window, text='Update', command= Update_data)
-    update_stud_button.grid(row= 12, columnspan=4, pady= 15)
+    diagnosisLabel = ctk.CTkLabel(form_container, text='Diagnosis', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    diagnosisLabel.grid(row=10, column=0, padx=(24, 16), pady=8, sticky=W)
+    diagnosisEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    diagnosisEntry.grid(row=10, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    indexing = patient_table.focus()
-    content = patient_table.item(indexing)
-    list_data = content['values']
-    patientIdEntry.insert(0, list_data[0])
-    nameEntry.insert(0, list_data[1])
-    mobileEntry.insert(0, list_data[2])
-    emaileEntry.insert(0, list_data[3])
-    addressEntry.insert(0, list_data[4])
-    genderVar.set(list_data[5])
-    diagnosisEntry.insert(0, list_data[7])
-    wardEntry.insert(0, list_data[8])
+    wardLabel = ctk.CTkLabel(form_container, text='Ward', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    wardLabel.grid(row=11, column=0, padx=(24, 16), pady=8, sticky=W)
+    wardEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    wardEntry.grid(row=11, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    # Parse stored address into its parts if available (expected format: addr, barangay, city, province)
+    def Update_data():
+        if bdayMonthEntry.get() in ('Month', '') or bdayDateEntry.get() in ('Day', '') or bdayYearEntry.get() in ('Year', ''):
+            messagebox.showerror('Error', 'Please complete the birth date fields.', parent=update_window)
+            return
+
+        required_fields = [
+            nameEntry.get().strip(), mobileEntry.get().strip(), emaileEntry.get().strip(), addressEntry.get().strip(),
+            barangayEntry.get().strip(), cityEntry.get().strip(), provinceEntry.get().strip(), genderVar.get().strip(),
+            diagnosisEntry.get().strip(), wardEntry.get().strip()
+        ]
+        if any(not value for value in required_fields):
+            messagebox.showerror('Error', 'All fields are required before updating.', parent=update_window)
+            return
+
+        combined_address = f"{addressEntry.get()}, {barangayEntry.get()}, {cityEntry.get()}, {provinceEntry.get()}"
+        combined_date = f"{bdayMonthEntry.get()}/{bdayDateEntry.get()}/{bdayYearEntry.get()}"
+        query = (
+            'update patient set name=%s, mobile=%s, email=%s, address=%s, gender=%s, dob=%s, diagnosis=%s, ward=%s, visit_date=%s '
+            'where patient_id=%s'
+        )
+        mycursor.execute(query, (
+            nameEntry.get(), mobileEntry.get(), emaileEntry.get(), combined_address, genderVar.get(), combined_date,
+            diagnosisEntry.get(), wardEntry.get(), date, patient_id
+        ))
+        con.commit()
+        messagebox.showinfo('Success', f'Patient ID {patient_id} updated successfully!', parent=update_window)
+        update_window.destroy()
+        Show_patient()
+
+    update_stud_button = ctk.CTkButton(form_container, text='Update Patient', command=Update_data, fg_color=SECONDARY,
+                                       hover_color=PRIMARY, corner_radius=14, font=('Segoe UI', 14, 'bold'))
+    update_stud_button.grid(row=12, column=0, columnspan=2, padx=24, pady=(18, 10), sticky='ew')
+
+    patientIdEntry.configure(state='normal')
+    patientIdEntry.insert(0, patient_id)
+    patientIdEntry.configure(state='disabled')
+    if len(list_data) > 1:
+        nameEntry.insert(0, list_data[1])
+    if len(list_data) > 2:
+        mobileEntry.insert(0, list_data[2])
+    if len(list_data) > 3:
+        emaileEntry.insert(0, list_data[3])
+
     stored_address = list_data[4] if len(list_data) > 4 else ''
     if stored_address:
         parts = [p.strip() for p in stored_address.split(',')]
         if len(parts) >= 1:
-            addressEntry.delete(0, END)
             addressEntry.insert(0, parts[0])
         if len(parts) >= 2:
-            barangayEntry.delete(0, END)
             barangayEntry.insert(0, parts[1])
         if len(parts) >= 3:
-            cityEntry.delete(0, END)
             cityEntry.insert(0, parts[2])
         if len(parts) >= 4:
-            provinceEntry.delete(0, END)
             provinceEntry.insert(0, parts[3])
 
-    existing_dob = list_data[6]
-    if existing_dob:
+    if len(list_data) > 5 and list_data[5]:
+        genderVar.set(list_data[5])
+    else:
+        genderVar.set(genderOptions[0])
+
+    existing_dob = list_data[6] if len(list_data) > 6 else ''
+    if existing_dob and '/' in existing_dob:
         month, day, year = existing_dob.split('/')
         bdayMonthEntry.set(month)
         bdayDateEntry.set(day)
         bdayYearEntry.set(year)
+
+    if len(list_data) > 7:
+        diagnosisEntry.insert(0, list_data[7])
+    if len(list_data) > 8:
+        wardEntry.insert(0, list_data[8])
+
 
 def Show_patient():
     query = 'select * from patient'
@@ -202,46 +246,70 @@ def Show_patient():
     fetched_data = mycursor.fetchall()
     _populate_table(fetched_data)
 
+
 def Delete_patient():
-    ask = messagebox.askquestion('Delete Patient', 'Do you want to delete this patient?')
-    if ask == 'yes':
-        indexing = patient_table.focus()
-        content = patient_table.item(indexing)
-        content_id = content['values'][0]
-        query = 'delete from patient where patient_id=%s'
-        mycursor.execute(query, (content_id,))
-        con.commit()
-        messagebox.showinfo('Deleted', f'Patient {content_id} deleted successfully')
-        Show_patient()
-    else:
-        pass
+    selection = patient_table.focus()
+    if not selection:
+        messagebox.showerror('Error', 'Please select a patient to delete.')
+        return
+
+    content = patient_table.item(selection)
+    values = content.get('values', [])
+    if not values:
+        messagebox.showerror('Error', 'Unable to read the selected patient data.')
+        return
+
+    confirm = messagebox.askyesno('Delete Patient', f'Do you want to delete patient {values[0]}?')
+    if not confirm:
+        return
+
+    query = 'delete from patient where patient_id=%s'
+    mycursor.execute(query, (values[0],))
+    con.commit()
+    messagebox.showinfo('Deleted', f'Patient {values[0]} deleted successfully')
+    Show_patient()
 
 
 def Search_patient():
     def search_data():
-        query = 'select * from patient where {}=%s'.format(selected_field.get())
-        mycursor.execute(query, (searchEntry.get(),))
+        field = selected_field.get()
+        term = searchEntry.get().strip()
+        if not term:
+            messagebox.showerror('Error', 'Please enter a value to search.', parent=search_window)
+            return
+
+        query = f'select * from patient where {field}=%s'
+        mycursor.execute(query, (term,))
         fetched_data = mycursor.fetchall()
+        if not fetched_data:
+            messagebox.showinfo('Search', 'No matching records found.', parent=search_window)
         _populate_table(fetched_data)
 
     search_window = ctk.CTkToplevel()
     search_window.title('Search Patient')
     search_window.grab_set()
     search_window.resizable(False, False)
+    search_window.configure(fg_color=ACCENT)
 
     search_fields = [
         'patient_id', 'name', 'mobile', 'email', 'address', 'gender', 'dob', 'diagnosis', 'ward'
     ]
 
-    selected_field = ttk.Combobox(search_window, values=search_fields, state="readonly")
-    selected_field.grid(row=0, column=0, padx=15, pady=10)
+    form_container = ctk.CTkFrame(search_window, fg_color=CARD_BG, corner_radius=18)
+    form_container.grid(row=0, column=0, padx=24, pady=24)
+    form_container.grid_columnconfigure(0, weight=0)
+    form_container.grid_columnconfigure(1, weight=1)
+
+    selected_field = ttk.Combobox(form_container, values=search_fields, state="readonly")
+    selected_field.grid(row=0, column=0, padx=(18, 12), pady=12)
     selected_field.current(0)
 
-    searchEntry = ctk.CTkEntry(search_window, font=('times new roman', 15, 'bold'))
-    searchEntry.grid(row=0, column=1, padx=15, pady=10)
+    searchEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    searchEntry.grid(row=0, column=1, padx=(0, 18), pady=12)
 
-    search_stud_button = ctk.CTkButton(search_window, text='Search Patient', command=search_data)
-    search_stud_button.grid(row=1, columnspan=2, pady=15)
+    search_stud_button = ctk.CTkButton(form_container, text='Search', command=search_data, fg_color=SECONDARY,
+                                       hover_color=PRIMARY, font=('Segoe UI', 13, 'bold'), corner_radius=12, width=120)
+    search_stud_button.grid(row=1, column=0, columnspan=2, pady=(8, 4), padx=18, sticky='ew')
 
 def Add_patient():
     def add_data():
@@ -260,6 +328,8 @@ def Add_patient():
             messagebox.showerror('Error', 'Patient ID should contain only numbers!', parent=add_window)
         elif contains_non_digits(mobileEntry.get()):
             messagebox.showerror('Error', 'Mobile No. should contain only numbers!', parent=add_window)
+        elif bdayMonthEntry.get() in ("Month", "") or bdayDateEntry.get() in ("Day", "") or bdayYearEntry.get() in ("Year", ""):
+            messagebox.showerror('Error', 'Please complete the birth date fields.', parent=add_window)
         elif (patientIdEntry.get()=='' or nameEntry.get()=='' or mobileEntry.get()=='' or emaileEntry.get()=='' or
               addressEntry.get()=='' or barangayEntry.get()=='' or cityEntry.get()=='' or provinceEntry.get()=='' or
               genderVar.get()=='' or diagnosisEntry.get()=='' or wardEntry.get()==''):
@@ -271,8 +341,9 @@ def Add_patient():
                 combined_address = f"{addressEntry.get()}, {barangayEntry.get()}, {cityEntry.get()}, {provinceEntry.get()}"
                 mycursor.execute(query, (patientIdEntry.get(), nameEntry.get(), mobileEntry.get(), emaileEntry.get(), combined_address, genderVar.get(), dob_combined, diagnosisEntry.get(), wardEntry.get(), date))
                 con.commit()
-                result = messagebox.askquestion('Confirm', 'Data was Added, Do you want to clear the form?', parent= add_window)
-                if result:
+                messagebox.showinfo('Success', f'Patient ID {patientIdEntry.get()} added successfully!', parent=add_window)
+                result = messagebox.askquestion('Confirm', 'Clear the form for another entry?', parent= add_window)
+                if result == 'yes':
                     patientIdEntry.delete(0, END)
                     nameEntry.delete(0, END)
                     mobileEntry.delete(0, END)
@@ -289,8 +360,11 @@ def Add_patient():
                     bdayYearEntry.set("Year")
                 else:
                     pass
-            except:
-                messagebox.showerror('Error', 'ID cannot be repeated', parent= add_window)
+            except IntegrityError:
+                messagebox.showerror('Error', 'Patient ID already exists.', parent= add_window)
+                return
+            except Exception as exc:
+                messagebox.showerror('Error', f'Failed to add patient: {exc}', parent=add_window)
                 return
 
         Show_patient()
@@ -299,86 +373,98 @@ def Add_patient():
     add_window = ctk.CTkToplevel()
     add_window.grab_set()
     add_window.resizable(False, False)
-    patientIdLabel = ctk.CTkLabel(add_window, text='Patient ID', font=('times new roman', 20, 'bold'))
-    patientIdLabel.grid(row= 0, column= 0, padx= 30, pady= 15, sticky=W)
-    patientIdEntry = ctk.CTkEntry(add_window, font=('times new roman', 15, 'bold'))
-    patientIdEntry.grid(row= 0, column= 1, padx= 15, pady=10)
+    add_window.title('Add Patient')
+    add_window.configure(fg_color=ACCENT)
 
-    nameLabel = ctk.CTkLabel(add_window, text='Name', font=('times new roman', 20, 'bold'))
-    nameLabel.grid(row= 1, column= 0, padx= 30, pady= 15, sticky=W)
-    nameEntry = ctk.CTkEntry(add_window, font=('times new roman', 15, 'bold'))
-    nameEntry.grid(row= 1, column= 1, padx= 15, pady=10)
+    form_container = ctk.CTkFrame(add_window, fg_color=CARD_BG, corner_radius=18)
+    form_container.grid(row=0, column=0, padx=26, pady=24)
+    form_container.grid_columnconfigure(0, weight=0)
+    form_container.grid_columnconfigure(1, weight=1)
 
-    mobileLabel = ctk.CTkLabel(add_window, text='Mobile No.', font=('times new roman', 20, 'bold'))
-    mobileLabel.grid(row= 2, column= 0, padx= 30, pady= 15, sticky=W)
-    mobileEntry = ctk.CTkEntry(add_window, font=('times new roman', 15, 'bold'))
-    mobileEntry.grid(row= 2, column= 1, padx= 15, pady=10)
+    patientIdLabel = ctk.CTkLabel(form_container, text='Patient ID', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    patientIdLabel.grid(row=0, column=0, padx=(24, 16), pady=(18, 8), sticky=W)
+    patientIdEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13), width=220)
+    patientIdEntry.grid(row=0, column=1, padx=(0, 24), pady=(18, 8), sticky='ew')
 
-    emailLabel = ctk.CTkLabel(add_window, text='Email', font=('times new roman', 20, 'bold'))
-    emailLabel.grid(row= 3, column= 0, padx= 30, pady= 15, sticky=W)
-    emaileEntry = ctk.CTkEntry(add_window, font=('times new roman', 15, 'bold'))
-    emaileEntry.grid(row= 3, column= 1, padx= 15, pady=10)
+    nameLabel = ctk.CTkLabel(form_container, text='Name', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    nameLabel.grid(row=1, column=0, padx=(24, 16), pady=8, sticky=W)
+    nameEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    nameEntry.grid(row=1, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    addressLabel = ctk.CTkLabel(add_window, text='Address', font=('times new roman', 20, 'bold'))
-    addressLabel.grid(row= 4, column= 0, padx= 30, pady= 15, sticky=W)
-    addressEntry = ctk.CTkEntry(add_window, font=('times new roman', 15, 'bold'))
-    addressEntry.grid(row= 4, column= 1, padx= 15, pady=10)
+    mobileLabel = ctk.CTkLabel(form_container, text='Mobile No.', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    mobileLabel.grid(row=2, column=0, padx=(24, 16), pady=8, sticky=W)
+    mobileEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    mobileEntry.grid(row=2, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    # Additional address fields: Barangay, City, Province (placed on separate rows)
-    barangayLabel = ctk.CTkLabel(add_window, text='Barangay', font=('times new roman', 16, 'bold'))
-    barangayLabel.grid(row=5, column=0, padx=30, pady=10, sticky=W)
-    barangayEntry = ctk.CTkEntry(add_window, font=('times new roman', 14, 'bold'))
-    barangayEntry.grid(row=5, column=1, padx=15, pady=10)
+    emailLabel = ctk.CTkLabel(form_container, text='Email', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    emailLabel.grid(row=3, column=0, padx=(24, 16), pady=8, sticky=W)
+    emaileEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    emaileEntry.grid(row=3, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    cityLabel = ctk.CTkLabel(add_window, text='City', font=('times new roman', 16, 'bold'))
-    cityLabel.grid(row=6, column=0, padx=30, pady=10, sticky=W)
-    cityEntry = ctk.CTkEntry(add_window, font=('times new roman', 14, 'bold'))
-    cityEntry.grid(row=6, column=1, padx=15, pady=10)
+    addressLabel = ctk.CTkLabel(form_container, text='Street Address', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    addressLabel.grid(row=4, column=0, padx=(24, 16), pady=8, sticky=W)
+    addressEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    addressEntry.grid(row=4, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    provinceLabel = ctk.CTkLabel(add_window, text='Province', font=('times new roman', 16, 'bold'))
-    provinceLabel.grid(row=7, column=0, padx=30, pady=10, sticky=W)
-    provinceEntry = ctk.CTkEntry(add_window, font=('times new roman', 14, 'bold'))
-    provinceEntry.grid(row=7, column=1, padx=15, pady=10)
+    barangayLabel = ctk.CTkLabel(form_container, text='Barangay', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    barangayLabel.grid(row=5, column=0, padx=(24, 16), pady=8, sticky=W)
+    barangayEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    barangayEntry.grid(row=5, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    genderLabel = ctk.CTkLabel(add_window, text='Gender', font=('times new roman', 20, 'bold'))
-    genderLabel.grid(row= 8, column= 0, padx= 30, pady= 15, sticky=W)
+    cityLabel = ctk.CTkLabel(form_container, text='City', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    cityLabel.grid(row=6, column=0, padx=(24, 16), pady=8, sticky=W)
+    cityEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    cityEntry.grid(row=6, column=1, padx=(0, 24), pady=8, sticky='ew')
+
+    provinceLabel = ctk.CTkLabel(form_container, text='Province', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    provinceLabel.grid(row=7, column=0, padx=(24, 16), pady=8, sticky=W)
+    provinceEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    provinceEntry.grid(row=7, column=1, padx=(0, 24), pady=8, sticky='ew')
+
+    genderLabel = ctk.CTkLabel(form_container, text='Gender', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    genderLabel.grid(row=8, column=0, padx=(24, 16), pady=8, sticky=W)
     genderOptions = ['Male', 'Female', 'Other']
     genderVar = StringVar(add_window)
     genderVar.set(genderOptions[0])
+    genderDropdown = ctk.CTkOptionMenu(form_container, values=genderOptions, variable=genderVar, font=('Segoe UI', 13))
+    genderDropdown.grid(row=8, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    genderDropdown = OptionMenu(add_window, genderVar, *genderOptions)
-    genderDropdown.config(width=15, font=('times new roman', 15, 'bold'))
-    genderDropdown.grid(row=8, column=1, padx=15, pady=10)
+    bdayLabel = ctk.CTkLabel(form_container, text='Date of Birth', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    bdayLabel.grid(row=9, column=0, padx=(24, 16), pady=8, sticky=W)
 
-    bdayLabel = ctk.CTkLabel(add_window, text='Date of Birth', font=('times new roman', 20, 'bold'))
-    bdayLabel.grid(row= 9, column= 0, padx= 30, pady= 15, sticky=W)
     months = [str(i) for i in range(1, 13)]
-    bdayMonthEntry = ttk.Combobox(add_window, values=months, font=('times new roman', 15, 'bold'), width=15, state="readonly")
-    bdayMonthEntry.grid(row=9, column=1, padx=0, pady=10)
-    bdayMonthEntry.set("Month")
-
     dates = [str(i) for i in range(1, 32)]
-    bdayDateEntry = ttk.Combobox(add_window, values=dates, font=('times new roman', 15, 'bold'), width=15, state="readonly")
-    bdayDateEntry.grid(row=9, column=2, padx=0, pady=10)
-    bdayDateEntry.set("Day")
+    years = [str(i) for i in range(1990, 2031)]
 
-    year = [str(i) for i in range(2000, 2023)]
-    bdayYearEntry = ttk.Combobox(add_window, values=year, font=('times new roman', 15, 'bold'), width=15, state="readonly")
-    bdayYearEntry.grid(row=9, column=3, padx=0, pady=10)
-    bdayYearEntry.set("Year")
+    dob_frame = ctk.CTkFrame(form_container, fg_color='transparent')
+    dob_frame.grid(row=9, column=1, padx=(0, 24), pady=8, sticky='ew')
+    dob_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
-    diagnosisLabel = ctk.CTkLabel(add_window, text='Diagnosis', font=('times new roman', 20, 'bold'))
-    diagnosisLabel.grid(row= 10, column= 0, padx= 30, pady= 15, sticky=W)
-    diagnosisEntry = ctk.CTkEntry(add_window, font=('times new roman', 15, 'bold'))
-    diagnosisEntry.grid(row= 10, column= 1, padx= 15, pady=10)
+    bdayMonthEntry = ctk.CTkComboBox(dob_frame, values=months, font=('Segoe UI', 12), state='readonly', width=80)
+    bdayMonthEntry.grid(row=0, column=0, padx=2)
+    bdayMonthEntry.set('Month')
 
-    wardLabel = ctk.CTkLabel(add_window, text='Ward', font=('times new roman', 20, 'bold'))
-    wardLabel.grid(row= 11, column= 0, padx= 30, pady= 15, sticky=W)
-    wardEntry = ctk.CTkEntry(add_window, font=('times new roman', 15, 'bold'))
-    wardEntry.grid(row= 11, column= 1, padx= 15, pady=10)
+    bdayDateEntry = ctk.CTkComboBox(dob_frame, values=dates, font=('Segoe UI', 12), state='readonly', width=80)
+    bdayDateEntry.grid(row=0, column=1, padx=2)
+    bdayDateEntry.set('Day')
 
-    add_stud_button = ctk.CTkButton(add_window, text='Add Patient', command=add_data)
-    add_stud_button.grid(row= 12, columnspan=4, pady= 15)
+    bdayYearEntry = ctk.CTkComboBox(dob_frame, values=years, font=('Segoe UI', 12), state='readonly', width=90)
+    bdayYearEntry.grid(row=0, column=2, padx=2)
+    bdayYearEntry.set('Year')
+
+    diagnosisLabel = ctk.CTkLabel(form_container, text='Diagnosis', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    diagnosisLabel.grid(row=10, column=0, padx=(24, 16), pady=8, sticky=W)
+    diagnosisEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    diagnosisEntry.grid(row=10, column=1, padx=(0, 24), pady=8, sticky='ew')
+
+    wardLabel = ctk.CTkLabel(form_container, text='Ward', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    wardLabel.grid(row=11, column=0, padx=(24, 16), pady=8, sticky=W)
+    wardEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    wardEntry.grid(row=11, column=1, padx=(0, 24), pady=8, sticky='ew')
+
+    add_stud_button = ctk.CTkButton(form_container, text='Add Patient', command=add_data, fg_color=SECONDARY,
+                                    hover_color=PRIMARY, corner_radius=14, font=('Segoe UI', 14, 'bold'))
+    add_stud_button.grid(row=12, column=0, columnspan=2, padx=24, pady=(18, 10), sticky='ew')
 
 def Exit():
     quit = messagebox.askquestion('Exit','Do you want to Exit')

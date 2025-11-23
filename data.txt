@@ -1,1 +1,1 @@
-{'username': 'password', 'lol': 'lol', 'KIT BUTETE': 'titiako', 'kit': 'kit'}
+{'username': 'password', 'kit': 'kit', 'bench': 'benchlulu'}
