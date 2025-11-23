@@ -6,7 +6,7 @@ import customtkinter as ctk
 from PIL import Image
 
 window = ctk.CTk()
-window.title("School Clinic - Staff Registration")
+window.title("School clinic - Staff Registration")
 window.geometry('550x550+300+200')
 ctk.set_appearance_mode('light')
 # Color palette aligned with the main system window
