@@ -106,7 +106,7 @@ title_label = ctk.CTkLabel(root, text='Staff Login', font=('Segoe UI', 26, 'bold
 title_label.place(relx=0.5, rely=0.26, anchor='center')
 
 form_card = ctk.CTkFrame(root, fg_color=CARD_BG, corner_radius=20)
-form_card.place(relx=0.5, rely=0.62, anchor='center', relwidth=0.78, relheight=0.6)
+form_card.place(relx=0.5, rely=0.62, anchor='center', relwidth=0.65, relheight=0.6)
 
 link_row = ctk.CTkFrame(root, fg_color=CARD_BG)
 link_row.place(relx=0.5, rely=0.85, anchor='center')

@@ -9,7 +9,6 @@ import pandas
 import customtkinter as ctk
 from PIL import ImageTk, Image
 
-# Color palette (all derived from the logo)
 PRIMARY = '#2ECC71'   # Mint Green
 SECONDARY = '#16A085' # Deep Teal
 BG = '#ECF0F1'        # Light Gray White (used for contrast when needed)
@@ -36,7 +35,7 @@ def Export_data():
         new_list.append(data_list)
 
     table = pandas.DataFrame(new_list, columns=[
-        'Patient ID', 'Name', 'Mobile no.', 'Email', 'Address', 'Gender', 'Date of Birth', 'Diagnosis', 'Ward', 'Visit Date'
+        'Patient ID', 'Name', 'Mobile no.', 'Email', 'Address', 'Gender', 'Date of Birth', 'Diagnosis', 'Visit Date'
     ])
     table.to_csv(url, index=False)
     messagebox.showinfo('Success', 'Data is saved')
@@ -162,11 +161,6 @@ def Update_patient():
     diagnosisEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
     diagnosisEntry.grid(row=10, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    wardLabel = ctk.CTkLabel(form_container, text='Ward', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
-    wardLabel.grid(row=11, column=0, padx=(24, 16), pady=8, sticky=W)
-    wardEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
-    wardEntry.grid(row=11, column=1, padx=(0, 24), pady=8, sticky='ew')
-
     def Update_data():
         if bdayMonthEntry.get() in ('Month', '') or bdayDateEntry.get() in ('Day', '') or bdayYearEntry.get() in ('Year', ''):
             messagebox.showerror('Error', 'Please complete the birth date fields.', parent=update_window)
@@ -175,21 +169,26 @@ def Update_patient():
         required_fields = [
             nameEntry.get().strip(), mobileEntry.get().strip(), emaileEntry.get().strip(), addressEntry.get().strip(),
             barangayEntry.get().strip(), cityEntry.get().strip(), provinceEntry.get().strip(), genderVar.get().strip(),
-            diagnosisEntry.get().strip(), wardEntry.get().strip()
+            diagnosisEntry.get().strip()
         ]
         if any(not value for value in required_fields):
             messagebox.showerror('Error', 'All fields are required before updating.', parent=update_window)
             return
 
+        mobile_number = mobileEntry.get().strip()
+        if not (len(mobile_number) == 11 and mobile_number.startswith('09') and mobile_number.isdigit()):
+            messagebox.showerror('Error', 'Mobile number must be 11 digits and start with 09.', parent=update_window)
+            return
+
         combined_address = f"{addressEntry.get()}, {barangayEntry.get()}, {cityEntry.get()}, {provinceEntry.get()}"
         combined_date = f"{bdayMonthEntry.get()}/{bdayDateEntry.get()}/{bdayYearEntry.get()}"
         query = (
-            'update patient set name=%s, mobile=%s, email=%s, address=%s, gender=%s, dob=%s, diagnosis=%s, ward=%s, visit_date=%s '
+            'update patient set name=%s, mobile=%s, email=%s, address=%s, gender=%s, dob=%s, diagnosis=%s, visit_date=%s '
             'where patient_id=%s'
         )
         mycursor.execute(query, (
-            nameEntry.get(), mobileEntry.get(), emaileEntry.get(), combined_address, genderVar.get(), combined_date,
-            diagnosisEntry.get(), wardEntry.get(), date, patient_id
+            nameEntry.get(), mobile_number, emaileEntry.get(), combined_address, genderVar.get(), combined_date,
+            diagnosisEntry.get(), date, patient_id
         ))
         con.commit()
         messagebox.showinfo('Success', f'Patient ID {patient_id} updated successfully!', parent=update_window)
@@ -198,7 +197,7 @@ def Update_patient():
 
     update_stud_button = ctk.CTkButton(form_container, text='Update Patient', command=Update_data, fg_color=SECONDARY,
                                        hover_color=PRIMARY, corner_radius=14, font=('Segoe UI', 14, 'bold'))
-    update_stud_button.grid(row=12, column=0, columnspan=2, padx=24, pady=(18, 10), sticky='ew')
+    update_stud_button.grid(row=11, column=0, columnspan=2, padx=24, pady=(18, 10), sticky='ew')
 
     patientIdEntry.configure(state='normal')
     patientIdEntry.insert(0, patient_id)
@@ -236,12 +235,10 @@ def Update_patient():
 
     if len(list_data) > 7:
         diagnosisEntry.insert(0, list_data[7])
-    if len(list_data) > 8:
-        wardEntry.insert(0, list_data[8])
 
 
 def Show_patient():
-    query = 'select * from patient'
+    query = 'select patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date from patient'
     mycursor.execute(query)
     fetched_data = mycursor.fetchall()
     _populate_table(fetched_data)
@@ -278,8 +275,12 @@ def Search_patient():
             messagebox.showerror('Error', 'Please enter a value to search.', parent=search_window)
             return
 
-        query = f'select * from patient where {field}=%s'
-        mycursor.execute(query, (term,))
+        query = (
+            f'select patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date '
+            f'from patient where {field} LIKE %s'
+        )
+        wildcard_term = f"%{term}%"
+        mycursor.execute(query, (wildcard_term,))
         fetched_data = mycursor.fetchall()
         if not fetched_data:
             messagebox.showinfo('Search', 'No matching records found.', parent=search_window)
@@ -292,7 +293,7 @@ def Search_patient():
     search_window.configure(fg_color=ACCENT)
 
     search_fields = [
-        'patient_id', 'name', 'mobile', 'email', 'address', 'gender', 'dob', 'diagnosis', 'ward'
+        'patient_id', 'name', 'mobile', 'email', 'address', 'gender', 'dob', 'diagnosis', 'visit_date'
     ]
 
     form_container = ctk.CTkFrame(search_window, fg_color=CARD_BG, corner_radius=18)
@@ -311,6 +312,48 @@ def Search_patient():
                                        hover_color=PRIMARY, font=('Segoe UI', 13, 'bold'), corner_radius=12, width=120)
     search_stud_button.grid(row=1, column=0, columnspan=2, pady=(8, 4), padx=18, sticky='ew')
 
+def Show_patient_details(event=None):
+    selection = patient_table.focus()
+    if not selection:
+        return
+
+    content = patient_table.item(selection)
+    values = content.get('values', [])
+    if not values:
+        return
+
+    detail_fields = ['Patient ID', 'Name', 'Mobile No.', 'Email', 'Address', 'Gender', 'Date of Birth', 'Diagnosis', 'Visit Date']
+    padded_values = list(values) + [''] * (len(detail_fields) - len(values))
+
+    detail_window = ctk.CTkToplevel()
+    detail_window.title(f'Patient {padded_values[0]} Details')
+    detail_window.grab_set()
+    detail_window.resizable(False, False)
+    detail_window.configure(fg_color=ACCENT)
+    detail_window.transient(root)
+
+    container = ctk.CTkFrame(detail_window, fg_color=CARD_BG, corner_radius=18)
+    container.grid(row=0, column=0, padx=26, pady=24)
+    container.grid_columnconfigure(1, weight=1)
+
+    for index, (field_name, field_value) in enumerate(zip(detail_fields, padded_values)):
+        label = ctk.CTkLabel(container, text=field_name, font=('Segoe UI', 15, 'bold'), text_color=TEXT)
+        label.grid(row=index, column=0, padx=(24, 16), pady=6, sticky=W)
+        value_label = ctk.CTkLabel(
+            container,
+            text=field_value if field_value else 'N/A',
+            font=('Segoe UI', 13),
+            text_color=TEXT,
+            justify='left',
+            anchor='w',
+            wraplength=360
+        )
+        value_label.grid(row=index, column=1, padx=(0, 24), pady=6, sticky='ew')
+
+    close_button = ctk.CTkButton(container, text='Close', command=detail_window.destroy, fg_color=SECONDARY,
+                                 hover_color=PRIMARY, corner_radius=14, font=('Segoe UI', 13, 'bold'))
+    close_button.grid(row=len(detail_fields), column=0, columnspan=2, padx=24, pady=(12, 6), sticky='ew')
+
 def Add_patient():
     def add_data():
         def contains_digits(string):
@@ -321,25 +364,32 @@ def Add_patient():
             return any(not char.isdigit() and char != "-" for char in string)
 
         dob_combined = f"{bdayMonthEntry.get()}/{bdayDateEntry.get()}/{bdayYearEntry.get()}"
+        mobile_number = mobileEntry.get().strip()
 
         if contains_digits(nameEntry.get()):
             messagebox.showerror('Error', 'Name cannot contain numbers!', parent=add_window)
         elif contains_non_digit(patientIdEntry.get()):
             messagebox.showerror('Error', 'Patient ID should contain only numbers!', parent=add_window)
-        elif contains_non_digits(mobileEntry.get()):
+        elif contains_non_digits(mobile_number):
             messagebox.showerror('Error', 'Mobile No. should contain only numbers!', parent=add_window)
+        elif not (len(mobile_number) == 11 and mobile_number.startswith('09') and mobile_number.isdigit()):
+            messagebox.showerror('Error', 'Mobile No. must be 11 digits and start with 09.', parent=add_window)
         elif bdayMonthEntry.get() in ("Month", "") or bdayDateEntry.get() in ("Day", "") or bdayYearEntry.get() in ("Year", ""):
             messagebox.showerror('Error', 'Please complete the birth date fields.', parent=add_window)
-        elif (patientIdEntry.get()=='' or nameEntry.get()=='' or mobileEntry.get()=='' or emaileEntry.get()=='' or
+        elif (patientIdEntry.get()=='' or nameEntry.get()=='' or mobile_number=='' or emaileEntry.get()=='' or
               addressEntry.get()=='' or barangayEntry.get()=='' or cityEntry.get()=='' or provinceEntry.get()=='' or
-              genderVar.get()=='' or diagnosisEntry.get()=='' or wardEntry.get()==''):
+              genderVar.get()=='' or diagnosisEntry.get()==''):
             messagebox.showerror('Error', 'All information are required!', parent= add_window)
         else:
             try:
-                query = 'insert into patient values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'
+                query = (
+                    'insert into patient ('
+                    'patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date'
+                    ') values (%s,%s,%s,%s,%s,%s,%s,%s,%s)'
+                )
                 # combine address + barangay/city/province into single address field
                 combined_address = f"{addressEntry.get()}, {barangayEntry.get()}, {cityEntry.get()}, {provinceEntry.get()}"
-                mycursor.execute(query, (patientIdEntry.get(), nameEntry.get(), mobileEntry.get(), emaileEntry.get(), combined_address, genderVar.get(), dob_combined, diagnosisEntry.get(), wardEntry.get(), date))
+                mycursor.execute(query, (patientIdEntry.get(), nameEntry.get(), mobile_number, emaileEntry.get(), combined_address, genderVar.get(), dob_combined, diagnosisEntry.get(), date))
                 con.commit()
                 messagebox.showinfo('Success', f'Patient ID {patientIdEntry.get()} added successfully!', parent=add_window)
                 result = messagebox.askquestion('Confirm', 'Clear the form for another entry?', parent= add_window)
@@ -353,7 +403,6 @@ def Add_patient():
                     cityEntry.delete(0, END)
                     provinceEntry.delete(0, END)
                     diagnosisEntry.delete(0, END)
-                    wardEntry.delete(0,END)
                     genderVar.set(genderOptions[0])
                     bdayMonthEntry.set("Month")
                     bdayDateEntry.set("Day")
@@ -457,14 +506,9 @@ def Add_patient():
     diagnosisEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
     diagnosisEntry.grid(row=10, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    wardLabel = ctk.CTkLabel(form_container, text='Ward', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
-    wardLabel.grid(row=11, column=0, padx=(24, 16), pady=8, sticky=W)
-    wardEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
-    wardEntry.grid(row=11, column=1, padx=(0, 24), pady=8, sticky='ew')
-
     add_stud_button = ctk.CTkButton(form_container, text='Add Patient', command=add_data, fg_color=SECONDARY,
                                     hover_color=PRIMARY, corner_radius=14, font=('Segoe UI', 14, 'bold'))
-    add_stud_button.grid(row=12, column=0, columnspan=2, padx=24, pady=(18, 10), sticky='ew')
+    add_stud_button.grid(row=11, column=0, columnspan=2, padx=24, pady=(18, 10), sticky='ew')
 
 def Exit():
     quit = messagebox.askquestion('Exit','Do you want to Exit')
@@ -487,7 +531,7 @@ try:
         'patient_id varchar(30) primary key, '
         'name varchar(30), mobile varchar(30), email varchar(30), '
         'address varchar(100), gender varchar(30), dob varchar(30), '
-        'diagnosis varchar(30), ward varchar(30), visit_date varchar(30)'
+        'diagnosis varchar(30), visit_date varchar(30)'
         ')'
     )
     mycursor.execute(query)
@@ -535,27 +579,34 @@ right_Frame.place(relx=right_frame_relx, rely=0.0, relwidth=0.2, relheight=1.0)
 right_Frame.grid_columnconfigure(0, weight=1)
 
 def _load_sidebar_logo(filenames=("logo.png",), size=(140, 140)):
+    from PIL import ImageDraw
     for fname in filenames:
         if os.path.exists(fname):
             try:
                 img = Image.open(fname).convert('RGBA')
                 img.thumbnail(size, Image.LANCZOS)
-                # create a background with the sidebar bg so the image sits centered
-                bg_img = Image.new('RGBA', size, SIDEBAR_BG)
+                # Create rounded mask
+                mask = Image.new('L', size, 0)
+                draw = ImageDraw.Draw(mask)
+                draw.rounded_rectangle((0, 0, size[0], size[1]), radius=35, fill=255)
+                # Apply mask to create rounded image
+                rounded_img = Image.new('RGBA', size, (0, 0, 0, 0))
                 x = (size[0] - img.width) // 2
                 y = (size[1] - img.height) // 2
-                # if the image has alpha, use it as mask when pasting
-                mask = img.split()[3] if 'A' in img.getbands() else None
-                bg_img.paste(img, (x, y), mask)
+                rounded_img.paste(img, (x, y))
+                rounded_img.putalpha(mask)
+                # Create background
+                bg_img = Image.new('RGBA', size, SIDEBAR_BG)
+                bg_img.paste(rounded_img, (0, 0), rounded_img)
                 return ImageTk.PhotoImage(bg_img)
             except Exception:
                 continue
-        # Fallback: plainly colored background that matches the sidebar
-        try:
-            fallback = Image.new('RGBA', size, SIDEBAR_BG)
-            return ImageTk.PhotoImage(fallback)
-        except Exception:
-            return None
+    # Fallback: plainly colored background that matches the sidebar
+    try:
+        fallback = Image.new('RGBA', size, SIDEBAR_BG)
+        return ImageTk.PhotoImage(fallback)
+    except Exception:
+        return None
 
 logo_image = _load_sidebar_logo()
 logo_Label = Label(right_Frame, image=logo_image, bg=SIDEBAR_BG)
@@ -577,23 +628,20 @@ button_kwargs = dict(
 add_stud_button = ctk.CTkButton(right_Frame, text='Add Patient', command=Add_patient, **button_kwargs)
 add_stud_button.grid(row=1, column=0, pady=8, padx=10, sticky='ew')
 
-search_stud_button = ctk.CTkButton(right_Frame, text='Search Patient', command=Search_patient, **button_kwargs)
-search_stud_button.grid(row=2, column=0, pady=8, padx=10, sticky='ew')
-
 delete_stud_button = ctk.CTkButton(right_Frame, text='Delete Patient', command=Delete_patient, **button_kwargs)
-delete_stud_button.grid(row=3, column=0, pady=8, padx=10, sticky='ew')
+delete_stud_button.grid(row=2, column=0, pady=8, padx=10, sticky='ew')
 
 update_stud_button = ctk.CTkButton(right_Frame, text='Update Patient', command=Update_patient, **button_kwargs)
-update_stud_button.grid(row=4, column=0, pady=8, padx=10, sticky='ew')
+update_stud_button.grid(row=3, column=0, pady=8, padx=10, sticky='ew')
 
 show_stud_button = ctk.CTkButton(right_Frame, text='Show Patients', command=Show_patient, **button_kwargs)
-show_stud_button.grid(row=5, column=0, pady=8, padx=10, sticky='ew')
+show_stud_button.grid(row=4, column=0, pady=8, padx=10, sticky='ew')
 
 export_stud_button = ctk.CTkButton(right_Frame, text='Export Patients', command=Export_data, **button_kwargs)
-export_stud_button.grid(row=6, column=0, pady=8, padx=10, sticky='ew')
+export_stud_button.grid(row=5, column=0, pady=8, padx=10, sticky='ew')
 
 exit_button = ctk.CTkButton(right_Frame, text='Exit', command=Exit, fg_color='#e74c3c', hover_color='#c0392b', text_color='white', font=('Segoe UI', 14, 'bold'), corner_radius=14, height=44)
-exit_button.grid(row=7, column=0, pady=12, padx=10, sticky='ew')
+exit_button.grid(row=6, column=0, pady=12, padx=10, sticky='ew')
 
 left_frame = ctk.CTkFrame(root, fg_color=ACCENT, corner_radius=24)
 # Compute left_frame position depending on which side the sidebar is on
@@ -614,8 +662,16 @@ else:
 left_frame.grid_columnconfigure(0, weight=1)
 left_frame.grid_rowconfigure(1, weight=1)
 
-table_heading = ctk.CTkLabel(left_frame, text='Patient Records', font=('Segoe UI', 22, 'bold'), text_color=TEXT, fg_color=ACCENT)
-table_heading.grid(row=0, column=0, sticky='w', padx=28, pady=(24, 12))
+header_frame = ctk.CTkFrame(left_frame, fg_color='transparent')
+header_frame.grid(row=0, column=0, sticky='ew', padx=28, pady=(24, 12))
+header_frame.grid_columnconfigure(0, weight=1)
+
+table_heading = ctk.CTkLabel(header_frame, text='Patient Records', font=('Segoe UI', 22, 'bold'), text_color=TEXT, fg_color=ACCENT)
+table_heading.grid(row=0, column=0, sticky='w')
+
+search_header_button = ctk.CTkButton(header_frame, text='Search Patient', command=Search_patient, fg_color=SECONDARY,
+                                     hover_color=PRIMARY, font=('Segoe UI', 13, 'bold'), corner_radius=12, width=140, height=36)
+search_header_button.grid(row=0, column=1, sticky='e', padx=(12, 0))
 
 table_container = ctk.CTkFrame(left_frame, fg_color=CARD_BG, corner_radius=20)
 table_container.grid(row=1, column=0, sticky='nsew', padx=24, pady=(0, 24))
@@ -630,9 +686,12 @@ scroll_bar_x = ttk.Scrollbar(tree_frame, orient=HORIZONTAL)
 scroll_bar_x.pack(side=BOTTOM, fill=X)
 
 patient_table = ttk.Treeview(tree_frame, columns=(
-    'Patient ID', 'Name', 'Mobile No.', 'Email', 'Address', 'Gender', 'Date of Birth', 'Diagnosis', 'Ward', 'Visit Date'
+    'Patient ID', 'Name', 'Mobile No.', 'Email', 'Address', 'Gender', 'Date of Birth', 'Diagnosis', 'Visit Date'
 ), xscrollcommand=scroll_bar_x.set, yscrollcommand=scroll_bar_y.set, show='headings')
 patient_table.pack(fill=BOTH, expand=1)
+
+patient_table.bind('<Double-1>', Show_patient_details)
+patient_table.bind('<Return>', Show_patient_details)
 
 scroll_bar_x.config(command=patient_table.xview)
 scroll_bar_y.config(command=patient_table.yview)
@@ -645,7 +704,6 @@ patient_table.heading('Address', text='Address')
 patient_table.heading('Gender', text='Gender')
 patient_table.heading('Date of Birth', text='Date of Birth')
 patient_table.heading('Diagnosis', text='Diagnosis')
-patient_table.heading('Ward', text='Ward')
 patient_table.heading('Visit Date', text='Visit Date')
 
 patient_table.column('Patient ID', width=150, anchor=CENTER)
@@ -656,7 +714,6 @@ patient_table.column('Address', width=300, anchor=CENTER)
 patient_table.column('Gender', width=150, anchor=CENTER)
 patient_table.column('Date of Birth', width=200, anchor=CENTER)
 patient_table.column('Diagnosis', width=250, anchor=CENTER)
-patient_table.column('Ward',width=150, anchor=CENTER)
 patient_table.column('Visit Date', width=200, anchor=CENTER)
 
 style = ttk.Style()
