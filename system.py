@@ -22,6 +22,55 @@ CARD_BG = '#FFFFFF'
 # Sidebar placement: set to 'right' or 'left'
 SIDEBAR_SIDE = 'left'
 
+SEARCH_FIELD_OPTIONS = {
+    'Patient ID': 'patient_id',
+    'Name': 'name',
+    'Mobile No.': 'mobile',
+    'Email': 'email',
+    'Address': 'address',
+    'Gender': 'gender',
+    'Date of Birth': 'dob',
+    'Diagnosis': 'diagnosis',
+    'Visit Date': 'visit_date'
+}
+
+SORT_FIELD_OPTIONS = {
+    'Patient ID': 'patient_id',
+    'Name': 'name',
+    'Date of Birth': 'dob',
+    'Visit Date': 'visit_date'
+}
+
+SORT_FIELD_LABELS = {value: key for key, value in SORT_FIELD_OPTIONS.items()}
+DATE_SORT_FIELDS = {'dob', 'visit_date'}
+
+current_sort_field = 'patient_id'
+current_sort_order = 'ASC'
+search_field_var = None
+search_entry = None
+
+
+def _normalize_mobile(number: str):
+    if not number:
+        return None
+    digits = ''.join(ch for ch in str(number) if ch.isdigit())
+    if digits.startswith('0') and len(digits) == 11:
+        digits = '63' + digits[1:]
+    elif digits.startswith('63') and len(digits) == 12:
+        pass
+    else:
+        return None
+    if len(digits) != 12 or not digits.startswith('63'):
+        return None
+    return f"+63 {digits[2:5]} {digits[5:8]} {digits[8:12]}"
+
+
+def _is_valid_mobile(number: str) -> bool:
+    return _normalize_mobile(number) is not None
+
+
+def _normalize_column_name(column_name: str) -> str:
+    return ''.join(ch for ch in str(column_name).lower() if ch.isalnum())
 
 def Export_data():
     url = filedialog.asksaveasfilename(defaultextension='.csv')
@@ -45,8 +94,56 @@ def _populate_table(rows):
     """Refresh treeview content and apply alternating row colors."""
     patient_table.delete(*patient_table.get_children())
     for index, row in enumerate(rows):
+        row_values = list(row)
+        if len(row_values) > 2:
+            formatted_mobile = _normalize_mobile(row_values[2])
+            if formatted_mobile:
+                row_values[2] = formatted_mobile
         tag = 'evenrow' if index % 2 == 0 else 'oddrow'
-        patient_table.insert('', END, values=row, tags=(tag,))
+        patient_table.insert('', END, values=row_values, tags=(tag,))
+
+
+def _fetch_patients(filter_field=None, filter_term=None):
+    global current_sort_field, current_sort_order
+    sort_field = current_sort_field if current_sort_field in SORT_FIELD_OPTIONS.values() else 'patient_id'
+    sort_order = current_sort_order if current_sort_order in ('ASC', 'DESC') else 'ASC'
+
+    query = (
+        'select patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date '
+        'from patient'
+    )
+    params = []
+
+    if filter_field and filter_term:
+        query += f' where LOWER({filter_field}) LIKE %s'
+        params.append(f"%{filter_term.lower()}%")
+
+    if sort_field in DATE_SORT_FIELDS:
+        query += f' order by STR_TO_DATE({sort_field}, "%m/%d/%Y") {sort_order}'
+    else:
+        query += f' order by {sort_field} {sort_order}'
+
+    mycursor.execute(query, tuple(params))
+    return mycursor.fetchall()
+
+
+def _bind_combobox_scroll(combobox, options):
+    def _on_mousewheel(event):
+        if not options:
+            return 'break'
+
+        current_value = combobox.get()
+        try:
+            index = options.index(current_value)
+        except ValueError:
+            index = 0
+
+        step = -1 if event.delta > 0 else 1
+        new_index = max(0, min(len(options) - 1, index + step))
+        combobox.set(options[new_index])
+        return 'break'
+
+    combobox.bind('<MouseWheel>', _on_mousewheel)
 
 
 def Get_previous_dob():
@@ -73,7 +170,19 @@ def Update_patient():
         messagebox.showerror('Error', 'Unable to read the selected patient data.')
         return
 
-    patient_id = list_data[0]
+    patient_id = str(list_data[0])
+
+    try:
+        mycursor.execute(
+            'select patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date '
+            'from patient where patient_id=%s', (patient_id,)
+        )
+        record = mycursor.fetchone()
+        if record:
+            list_data = ['' if value is None else str(value) for value in record]
+            patient_id = list_data[0]
+    except Exception:
+        record = None
 
     update_window = ctk.CTkToplevel()
     update_window.title('Update Patient')
@@ -98,7 +207,7 @@ def Update_patient():
 
     mobileLabel = ctk.CTkLabel(form_container, text='Mobile No.', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
     mobileLabel.grid(row=2, column=0, padx=(24, 16), pady=8, sticky=W)
-    mobileEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    mobileEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13), placeholder_text='+63 000 000 0000')
     mobileEntry.grid(row=2, column=1, padx=(0, 24), pady=8, sticky='ew')
 
     emailLabel = ctk.CTkLabel(form_container, text='Email', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
@@ -116,10 +225,10 @@ def Update_patient():
     barangayEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
     barangayEntry.grid(row=5, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    cityLabel = ctk.CTkLabel(form_container, text='City', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
-    cityLabel.grid(row=6, column=0, padx=(24, 16), pady=8, sticky=W)
-    cityEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
-    cityEntry.grid(row=6, column=1, padx=(0, 24), pady=8, sticky='ew')
+    municipalityLabel = ctk.CTkLabel(form_container, text='Municipality', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    municipalityLabel.grid(row=6, column=0, padx=(24, 16), pady=8, sticky=W)
+    municipalityEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    municipalityEntry.grid(row=6, column=1, padx=(0, 24), pady=8, sticky='ew')
 
     provinceLabel = ctk.CTkLabel(form_container, text='Province', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
     provinceLabel.grid(row=7, column=0, padx=(24, 16), pady=8, sticky=W)
@@ -136,25 +245,28 @@ def Update_patient():
     bdayLabel = ctk.CTkLabel(form_container, text='Date of Birth', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
     bdayLabel.grid(row=9, column=0, padx=(24, 16), pady=8, sticky=W)
 
-    months = [str(i) for i in range(1, 13)]
-    dates = [str(i) for i in range(1, 32)]
-    years = [str(i) for i in range(1990, 2031)]
+    months = ['Month'] + [str(i) for i in range(1, 13)]
+    dates = ['Day'] + [str(i) for i in range(1, 32)]
+    years = ['Year'] + [str(i) for i in range(1990, 2031)]
 
     dob_frame = ctk.CTkFrame(form_container, fg_color='transparent')
     dob_frame.grid(row=9, column=1, padx=(0, 24), pady=8, sticky='ew')
     dob_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
-    bdayMonthEntry = ctk.CTkComboBox(dob_frame, values=months, font=('Segoe UI', 12), state='readonly', width=80)
-    bdayMonthEntry.grid(row=0, column=0, padx=2)
-    bdayMonthEntry.set('Month')
+    bdayMonthEntry = ttk.Combobox(dob_frame, values=months, state='readonly', width=10)
+    bdayMonthEntry.grid(row=0, column=0, padx=2, pady=0, sticky='ew')
+    bdayMonthEntry.current(0)
+    _bind_combobox_scroll(bdayMonthEntry, months)
 
-    bdayDateEntry = ctk.CTkComboBox(dob_frame, values=dates, font=('Segoe UI', 12), state='readonly', width=80)
-    bdayDateEntry.grid(row=0, column=1, padx=2)
-    bdayDateEntry.set('Day')
+    bdayDateEntry = ttk.Combobox(dob_frame, values=dates, state='readonly', width=10)
+    bdayDateEntry.grid(row=0, column=1, padx=2, pady=0, sticky='ew')
+    bdayDateEntry.current(0)
+    _bind_combobox_scroll(bdayDateEntry, dates)
 
-    bdayYearEntry = ctk.CTkComboBox(dob_frame, values=years, font=('Segoe UI', 12), state='readonly', width=90)
-    bdayYearEntry.grid(row=0, column=2, padx=2)
-    bdayYearEntry.set('Year')
+    bdayYearEntry = ttk.Combobox(dob_frame, values=years, state='readonly', width=12)
+    bdayYearEntry.grid(row=0, column=2, padx=2, pady=0, sticky='ew')
+    bdayYearEntry.current(0)
+    _bind_combobox_scroll(bdayYearEntry, years)
 
     diagnosisLabel = ctk.CTkLabel(form_container, text='Diagnosis', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
     diagnosisLabel.grid(row=10, column=0, padx=(24, 16), pady=8, sticky=W)
@@ -168,7 +280,7 @@ def Update_patient():
 
         required_fields = [
             nameEntry.get().strip(), mobileEntry.get().strip(), emaileEntry.get().strip(), addressEntry.get().strip(),
-            barangayEntry.get().strip(), cityEntry.get().strip(), provinceEntry.get().strip(), genderVar.get().strip(),
+            barangayEntry.get().strip(), municipalityEntry.get().strip(), provinceEntry.get().strip(), genderVar.get().strip(),
             diagnosisEntry.get().strip()
         ]
         if any(not value for value in required_fields):
@@ -176,18 +288,19 @@ def Update_patient():
             return
 
         mobile_number = mobileEntry.get().strip()
-        if not (len(mobile_number) == 11 and mobile_number.startswith('09') and mobile_number.isdigit()):
-            messagebox.showerror('Error', 'Mobile number must be 11 digits and start with 09.', parent=update_window)
+        formatted_mobile = _normalize_mobile(mobile_number)
+        if not formatted_mobile:
+            messagebox.showerror('Error', 'Enter a valid mobile number.', parent=update_window)
             return
 
-        combined_address = f"{addressEntry.get()}, {barangayEntry.get()}, {cityEntry.get()}, {provinceEntry.get()}"
+        combined_address = f"{addressEntry.get()}, {barangayEntry.get()}, {municipalityEntry.get()}, {provinceEntry.get()}"
         combined_date = f"{bdayMonthEntry.get()}/{bdayDateEntry.get()}/{bdayYearEntry.get()}"
         query = (
             'update patient set name=%s, mobile=%s, email=%s, address=%s, gender=%s, dob=%s, diagnosis=%s, visit_date=%s '
             'where patient_id=%s'
         )
         mycursor.execute(query, (
-            nameEntry.get(), mobile_number, emaileEntry.get(), combined_address, genderVar.get(), combined_date,
+            nameEntry.get(), formatted_mobile, emaileEntry.get(), combined_address, genderVar.get(), combined_date,
             diagnosisEntry.get(), date, patient_id
         ))
         con.commit()
@@ -205,7 +318,8 @@ def Update_patient():
     if len(list_data) > 1:
         nameEntry.insert(0, list_data[1])
     if len(list_data) > 2:
-        mobileEntry.insert(0, list_data[2])
+        formatted_mobile = _normalize_mobile(list_data[2])
+        mobileEntry.insert(0, formatted_mobile if formatted_mobile else list_data[2])
     if len(list_data) > 3:
         emaileEntry.insert(0, list_data[3])
 
@@ -217,7 +331,7 @@ def Update_patient():
         if len(parts) >= 2:
             barangayEntry.insert(0, parts[1])
         if len(parts) >= 3:
-            cityEntry.insert(0, parts[2])
+            municipalityEntry.insert(0, parts[2])
         if len(parts) >= 4:
             provinceEntry.insert(0, parts[3])
 
@@ -229,8 +343,16 @@ def Update_patient():
     existing_dob = list_data[6] if len(list_data) > 6 else ''
     if existing_dob and '/' in existing_dob:
         month, day, year = existing_dob.split('/')
-        bdayMonthEntry.set(month)
-        bdayDateEntry.set(day)
+        month_value = month.lstrip('0') or month
+        day_value = day.lstrip('0') or day
+        if month_value not in months:
+            month_value = months[0]
+        if day_value not in dates:
+            day_value = dates[0]
+        if year not in years:
+            year = years[0]
+        bdayMonthEntry.set(month_value)
+        bdayDateEntry.set(day_value)
         bdayYearEntry.set(year)
 
     if len(list_data) > 7:
@@ -238,9 +360,21 @@ def Update_patient():
 
 
 def Show_patient():
-    query = 'select patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date from patient'
-    mycursor.execute(query)
-    fetched_data = mycursor.fetchall()
+    filter_field = None
+    filter_term = None
+
+    global search_entry, search_field_var
+    if search_entry is not None and search_field_var is not None:
+        try:
+            term = search_entry.get().strip()
+        except Exception:
+            term = ''
+        if term:
+            selected_label = search_field_var.get() if hasattr(search_field_var, 'get') else 'Patient ID'
+            filter_field = SEARCH_FIELD_OPTIONS.get(selected_label, 'patient_id')
+            filter_term = term
+
+    fetched_data = _fetch_patients(filter_field, filter_term)
     _populate_table(fetched_data)
 
 
@@ -267,66 +401,42 @@ def Delete_patient():
     Show_patient()
 
 
-def Search_patient():
-    def search_data():
-        field = selected_field.get()
-        term = searchEntry.get().strip()
-        if not term:
-            messagebox.showerror('Error', 'Please enter a value to search.', parent=search_window)
-            return
-
-        query = (
-            f'select patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date '
-            f'from patient where {field} LIKE %s'
-        )
-        wildcard_term = f"%{term}%"
-        mycursor.execute(query, (wildcard_term,))
-        fetched_data = mycursor.fetchall()
-        if not fetched_data:
-            messagebox.showinfo('Search', 'No matching records found.', parent=search_window)
-        _populate_table(fetched_data)
-
-    search_window = ctk.CTkToplevel()
-    search_window.title('Search Patient')
-    search_window.grab_set()
-    search_window.resizable(False, False)
-    search_window.configure(fg_color=ACCENT)
-
-    search_fields = [
-        'patient_id', 'name', 'mobile', 'email', 'address', 'gender', 'dob', 'diagnosis', 'visit_date'
-    ]
-
-    form_container = ctk.CTkFrame(search_window, fg_color=CARD_BG, corner_radius=18)
-    form_container.grid(row=0, column=0, padx=24, pady=24)
-    form_container.grid_columnconfigure(0, weight=0)
-    form_container.grid_columnconfigure(1, weight=1)
-
-    selected_field = ttk.Combobox(form_container, values=search_fields, state="readonly")
-    selected_field.grid(row=0, column=0, padx=(18, 12), pady=12)
-    selected_field.current(0)
-
-    searchEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
-    searchEntry.grid(row=0, column=1, padx=(0, 18), pady=12)
-
-    search_stud_button = ctk.CTkButton(form_container, text='Search', command=search_data, fg_color=SECONDARY,
-                                       hover_color=PRIMARY, font=('Segoe UI', 13, 'bold'), corner_radius=12, width=120)
-    search_stud_button.grid(row=1, column=0, columnspan=2, pady=(8, 4), padx=18, sticky='ew')
-
 def Show_patient_details(event=None):
     selection = patient_table.focus()
     if not selection:
         return
 
     content = patient_table.item(selection)
-    values = content.get('values', [])
+    values = list(content.get('values', []))
     if not values:
         return
 
+    patient_id = str(values[0]) if values else ''
+
+    if patient_id:
+        try:
+            mycursor.execute(
+                'select patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date '
+                'from patient where patient_id=%s', (patient_id,)
+            )
+            record = mycursor.fetchone()
+            if record:
+                values = ['' if value is None else str(value) for value in record]
+        except Exception:
+            pass
+
     detail_fields = ['Patient ID', 'Name', 'Mobile No.', 'Email', 'Address', 'Gender', 'Date of Birth', 'Diagnosis', 'Visit Date']
-    padded_values = list(values) + [''] * (len(detail_fields) - len(values))
+    display_values = list(values) + [''] * (len(detail_fields) - len(values))
+
+    if display_values:
+        display_values[0] = str(display_values[0])
+    if len(display_values) > 2 and display_values[2]:
+        formatted_mobile = _normalize_mobile(display_values[2])
+        if formatted_mobile:
+            display_values[2] = formatted_mobile
 
     detail_window = ctk.CTkToplevel()
-    detail_window.title(f'Patient {padded_values[0]} Details')
+    detail_window.title(f'Patient {display_values[0]} Details')
     detail_window.grab_set()
     detail_window.resizable(False, False)
     detail_window.configure(fg_color=ACCENT)
@@ -336,7 +446,7 @@ def Show_patient_details(event=None):
     container.grid(row=0, column=0, padx=26, pady=24)
     container.grid_columnconfigure(1, weight=1)
 
-    for index, (field_name, field_value) in enumerate(zip(detail_fields, padded_values)):
+    for index, (field_name, field_value) in enumerate(zip(detail_fields, display_values)):
         label = ctk.CTkLabel(container, text=field_name, font=('Segoe UI', 15, 'bold'), text_color=TEXT)
         label.grid(row=index, column=0, padx=(24, 16), pady=6, sticky=W)
         value_label = ctk.CTkLabel(
@@ -354,33 +464,232 @@ def Show_patient_details(event=None):
                                  hover_color=PRIMARY, corner_radius=14, font=('Segoe UI', 13, 'bold'))
     close_button.grid(row=len(detail_fields), column=0, columnspan=2, padx=24, pady=(12, 6), sticky='ew')
 
+
+def _on_search_entry_change(event=None):
+    Show_patient()
+
+
+def _on_search_field_change(choice):
+    Show_patient()
+
+
+def open_sort_dialog():
+    sort_window = ctk.CTkToplevel()
+    sort_window.title('Sort Patients')
+    sort_window.grab_set()
+    sort_window.resizable(False, False)
+    sort_window.configure(fg_color=ACCENT)
+    sort_window.transient(root)
+
+    container = ctk.CTkFrame(sort_window, fg_color=CARD_BG, corner_radius=18)
+    container.grid(row=0, column=0, padx=26, pady=24)
+    container.grid_columnconfigure(0, weight=1)
+
+    ctk.CTkLabel(container, text='Sort By', font=('Segoe UI', 16, 'bold'), text_color=TEXT).grid(
+        row=0, column=0, padx=12, pady=(6, 8), sticky='ew'
+    )
+
+    field_var = ctk.StringVar(value=SORT_FIELD_LABELS.get(current_sort_field, 'Patient ID'))
+    field_menu = ctk.CTkOptionMenu(container, values=list(SORT_FIELD_OPTIONS.keys()), variable=field_var,
+                                   font=('Segoe UI', 13), fg_color=SECONDARY, button_color=SECONDARY,
+                                   button_hover_color=PRIMARY)
+    field_menu.grid(row=1, column=0, padx=12, pady=(0, 10), sticky='ew')
+
+    ctk.CTkLabel(container, text='Order', font=('Segoe UI', 16, 'bold'), text_color=TEXT).grid(
+        row=2, column=0, padx=12, pady=(12, 8), sticky='ew'
+    )
+
+    order_var = ctk.StringVar(value='Ascending' if current_sort_order == 'ASC' else 'Descending')
+    order_menu = ctk.CTkOptionMenu(container, values=['Ascending', 'Descending'], variable=order_var,
+                                   font=('Segoe UI', 13), fg_color=SECONDARY, button_color=SECONDARY,
+                                   button_hover_color=PRIMARY)
+    order_menu.grid(row=3, column=0, padx=12, pady=(0, 16), sticky='ew')
+
+    button_frame = ctk.CTkFrame(container, fg_color='transparent')
+    button_frame.grid(row=4, column=0, padx=12, pady=(6, 0), sticky='ew')
+    button_frame.grid_columnconfigure((0, 1), weight=1)
+
+    def apply_sort():
+        global current_sort_field, current_sort_order
+        current_sort_field = SORT_FIELD_OPTIONS.get(field_var.get(), 'patient_id')
+        current_sort_order = 'ASC' if order_var.get() == 'Ascending' else 'DESC'
+        sort_window.destroy()
+        Show_patient()
+
+    apply_button = ctk.CTkButton(button_frame, text='Apply', command=apply_sort, fg_color=SECONDARY,
+                                 hover_color=PRIMARY, corner_radius=12, font=('Segoe UI', 13, 'bold'))
+    apply_button.grid(row=0, column=0, padx=(0, 6), pady=4, sticky='ew')
+
+    cancel_button = ctk.CTkButton(button_frame, text='Cancel', command=sort_window.destroy, fg_color='#95A5A6',
+                                  hover_color='#7F8C8D', corner_radius=12, font=('Segoe UI', 13, 'bold'))
+    cancel_button.grid(row=0, column=1, padx=(6, 0), pady=4, sticky='ew')
+
+
+def Import_data():
+    filepath = filedialog.askopenfilename(
+        title='Import Patient Data',
+        filetypes=[('CSV Files', '*.csv'), ('All Files', '*.*')]
+    )
+    if not filepath:
+        return
+
+    try:
+        data_frame = pandas.read_csv(filepath)
+    except Exception as exc:
+        messagebox.showerror('Error', f'Unable to read the selected file: {exc}')
+        return
+
+    if data_frame.empty:
+        messagebox.showinfo('Import', 'The selected file does not contain any records.')
+        return
+
+    normalized_to_original = {
+        _normalize_column_name(col): col for col in data_frame.columns
+    }
+
+    required_columns = {
+        'patient_id': 'patientid',
+        'name': 'name',
+        'mobile': 'mobileno',
+        'email': 'email',
+        'address': 'address',
+        'gender': 'gender',
+        'dob': 'dateofbirth',
+        'diagnosis': 'diagnosis',
+        'visit_date': 'visitdate'
+    }
+
+    resolved_columns = {}
+    missing_fields = []
+    for field, normalized in required_columns.items():
+        if normalized in normalized_to_original:
+            resolved_columns[field] = normalized_to_original[normalized]
+        else:
+            missing_fields.append(field)
+
+    if missing_fields:
+        pretty_missing = ', '.join(field.replace('_', ' ').title() for field in missing_fields)
+        messagebox.showerror('Error', f'Missing required columns in file: {pretty_missing}')
+        return
+
+    def get_value(row, field):
+        value = row[resolved_columns[field]]
+        if pandas.isna(value):
+            return ''
+        return str(value).strip()
+
+    inserted = 0
+    skipped = 0
+    error_samples = []
+    field_labels = {
+        'patient_id': 'patient ID',
+        'name': 'name',
+        'mobile': 'mobile number',
+        'email': 'email',
+        'address': 'address',
+        'gender': 'gender',
+        'dob': 'date of birth',
+        'diagnosis': 'diagnosis',
+        'visit_date': 'visit date'
+    }
+
+    for idx, row in data_frame.iterrows():
+        excel_row = idx + 2  # account for header row
+        patient_id = get_value(row, 'patient_id')
+        name = get_value(row, 'name')
+        mobile = get_value(row, 'mobile')
+        email_value = get_value(row, 'email')
+        address_value = get_value(row, 'address')
+        gender_value = get_value(row, 'gender')
+        dob_value = get_value(row, 'dob')
+        diagnosis_value = get_value(row, 'diagnosis')
+        visit_date_value = get_value(row, 'visit_date')
+
+        required_values = {
+            'patient_id': patient_id,
+            'name': name,
+            'mobile': mobile,
+            'email': email_value,
+            'address': address_value,
+            'gender': gender_value,
+            'dob': dob_value,
+            'diagnosis': diagnosis_value,
+            'visit_date': visit_date_value
+        }
+
+        missing_values = [field_labels[key] for key, value in required_values.items() if not value]
+        if missing_values:
+            skipped += 1
+            if len(error_samples) < 5:
+                missing_text = ', '.join(missing_values)
+                error_samples.append(f'Row {excel_row}: Missing {missing_text}.')
+            continue
+
+        formatted_mobile = _normalize_mobile(mobile)
+        if not formatted_mobile:
+            skipped += 1
+            if len(error_samples) < 5:
+                error_samples.append(f'Row {excel_row}: Mobile number must follow +63 000 000 0000 format.')
+            continue
+
+        try:
+            query = (
+                'insert into patient ('
+                'patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date'
+                ') values (%s,%s,%s,%s,%s,%s,%s,%s,%s)'
+            )
+            mycursor.execute(query, (
+                patient_id, name, formatted_mobile, email_value, address_value, gender_value,
+                dob_value, diagnosis_value, visit_date_value
+            ))
+            con.commit()
+            inserted += 1
+        except IntegrityError:
+            con.rollback()
+            skipped += 1
+            if len(error_samples) < 5:
+                error_samples.append(f'Row {excel_row}: Patient ID already exists.')
+        except Exception as exc:
+            con.rollback()
+            skipped += 1
+            if len(error_samples) < 5:
+                error_samples.append(f'Row {excel_row}: {exc}')
+
+    Show_patient()
+
+    summary_message = f'Imported {inserted} record(s).'
+    if skipped:
+        summary_message += f'\nSkipped {skipped} record(s).'
+    if error_samples:
+        summary_message += '\n\nSample issues:\n' + '\n'.join(error_samples)
+
+    messagebox.showinfo('Import Complete', summary_message)
+
 def Add_patient():
     def add_data():
         def contains_digits(string):
             return any(char.isdigit() for char in string)
-        def contains_non_digits(string):
-            return any(not char.isdigit() for char in string)
         def contains_non_digit(string):
             return any(not char.isdigit() and char != "-" for char in string)
 
         dob_combined = f"{bdayMonthEntry.get()}/{bdayDateEntry.get()}/{bdayYearEntry.get()}"
-        mobile_number = mobileEntry.get().strip()
+        mobile_input = mobileEntry.get().strip()
 
         if contains_digits(nameEntry.get()):
             messagebox.showerror('Error', 'Name cannot contain numbers!', parent=add_window)
         elif contains_non_digit(patientIdEntry.get()):
             messagebox.showerror('Error', 'Patient ID should contain only numbers!', parent=add_window)
-        elif contains_non_digits(mobile_number):
-            messagebox.showerror('Error', 'Mobile No. should contain only numbers!', parent=add_window)
-        elif not (len(mobile_number) == 11 and mobile_number.startswith('09') and mobile_number.isdigit()):
-            messagebox.showerror('Error', 'Mobile No. must be 11 digits and start with 09.', parent=add_window)
         elif bdayMonthEntry.get() in ("Month", "") or bdayDateEntry.get() in ("Day", "") or bdayYearEntry.get() in ("Year", ""):
             messagebox.showerror('Error', 'Please complete the birth date fields.', parent=add_window)
-        elif (patientIdEntry.get()=='' or nameEntry.get()=='' or mobile_number=='' or emaileEntry.get()=='' or
-              addressEntry.get()=='' or barangayEntry.get()=='' or cityEntry.get()=='' or provinceEntry.get()=='' or
+        elif (patientIdEntry.get()=='' or nameEntry.get()=='' or not mobile_input or emaileEntry.get()=='' or
+              addressEntry.get()=='' or barangayEntry.get()=='' or municipalityEntry.get()=='' or provinceEntry.get()=='' or
               genderVar.get()=='' or diagnosisEntry.get()==''):
             messagebox.showerror('Error', 'All information are required!', parent= add_window)
         else:
+            formatted_mobile = _normalize_mobile(mobile_input)
+            if not formatted_mobile:
+                messagebox.showerror('Error', 'Mobile No. must follow the format +63 000 000 0000.', parent=add_window)
+                return
             try:
                 query = (
                     'insert into patient ('
@@ -388,8 +697,8 @@ def Add_patient():
                     ') values (%s,%s,%s,%s,%s,%s,%s,%s,%s)'
                 )
                 # combine address + barangay/city/province into single address field
-                combined_address = f"{addressEntry.get()}, {barangayEntry.get()}, {cityEntry.get()}, {provinceEntry.get()}"
-                mycursor.execute(query, (patientIdEntry.get(), nameEntry.get(), mobile_number, emaileEntry.get(), combined_address, genderVar.get(), dob_combined, diagnosisEntry.get(), date))
+                combined_address = f"{addressEntry.get()}, {barangayEntry.get()}, {municipalityEntry.get()}, {provinceEntry.get()}"
+                mycursor.execute(query, (patientIdEntry.get(), nameEntry.get(), formatted_mobile, emaileEntry.get(), combined_address, genderVar.get(), dob_combined, diagnosisEntry.get(), date))
                 con.commit()
                 messagebox.showinfo('Success', f'Patient ID {patientIdEntry.get()} added successfully!', parent=add_window)
                 result = messagebox.askquestion('Confirm', 'Clear the form for another entry?', parent= add_window)
@@ -400,15 +709,15 @@ def Add_patient():
                     emaileEntry.delete(0, END)
                     addressEntry.delete(0, END)
                     barangayEntry.delete(0, END)
-                    cityEntry.delete(0, END)
+                    municipalityEntry.delete(0, END)
                     provinceEntry.delete(0, END)
                     diagnosisEntry.delete(0, END)
                     genderVar.set(genderOptions[0])
-                    bdayMonthEntry.set("Month")
-                    bdayDateEntry.set("Day")
-                    bdayYearEntry.set("Year")
+                    bdayMonthEntry.current(0)
+                    bdayDateEntry.current(0)
+                    bdayYearEntry.current(0)
                 else:
-                    pass
+                    add_window.destroy()
             except IntegrityError:
                 messagebox.showerror('Error', 'Patient ID already exists.', parent= add_window)
                 return
@@ -442,7 +751,7 @@ def Add_patient():
 
     mobileLabel = ctk.CTkLabel(form_container, text='Mobile No.', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
     mobileLabel.grid(row=2, column=0, padx=(24, 16), pady=8, sticky=W)
-    mobileEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    mobileEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13), placeholder_text='+63 000 000 0000')
     mobileEntry.grid(row=2, column=1, padx=(0, 24), pady=8, sticky='ew')
 
     emailLabel = ctk.CTkLabel(form_container, text='Email', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
@@ -460,10 +769,10 @@ def Add_patient():
     barangayEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
     barangayEntry.grid(row=5, column=1, padx=(0, 24), pady=8, sticky='ew')
 
-    cityLabel = ctk.CTkLabel(form_container, text='City', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
-    cityLabel.grid(row=6, column=0, padx=(24, 16), pady=8, sticky=W)
-    cityEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
-    cityEntry.grid(row=6, column=1, padx=(0, 24), pady=8, sticky='ew')
+    municipalityLabel = ctk.CTkLabel(form_container, text='Municipality', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
+    municipalityLabel.grid(row=6, column=0, padx=(24, 16), pady=8, sticky=W)
+    municipalityEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
+    municipalityEntry.grid(row=6, column=1, padx=(0, 24), pady=8, sticky='ew')
 
     provinceLabel = ctk.CTkLabel(form_container, text='Province', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
     provinceLabel.grid(row=7, column=0, padx=(24, 16), pady=8, sticky=W)
@@ -481,25 +790,28 @@ def Add_patient():
     bdayLabel = ctk.CTkLabel(form_container, text='Date of Birth', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
     bdayLabel.grid(row=9, column=0, padx=(24, 16), pady=8, sticky=W)
 
-    months = [str(i) for i in range(1, 13)]
-    dates = [str(i) for i in range(1, 32)]
-    years = [str(i) for i in range(1990, 2031)]
+    months = ['Month'] + [str(i) for i in range(1, 13)]
+    dates = ['Day'] + [str(i) for i in range(1, 32)]
+    years = ['Year'] + [str(i) for i in range(1990, 2031)]
 
     dob_frame = ctk.CTkFrame(form_container, fg_color='transparent')
     dob_frame.grid(row=9, column=1, padx=(0, 24), pady=8, sticky='ew')
     dob_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
-    bdayMonthEntry = ctk.CTkComboBox(dob_frame, values=months, font=('Segoe UI', 12), state='readonly', width=80)
-    bdayMonthEntry.grid(row=0, column=0, padx=2)
-    bdayMonthEntry.set('Month')
+    bdayMonthEntry = ttk.Combobox(dob_frame, values=months, state='readonly', width=10)
+    bdayMonthEntry.grid(row=0, column=0, padx=2, pady=0, sticky='ew')
+    bdayMonthEntry.current(0)
+    _bind_combobox_scroll(bdayMonthEntry, months)
 
-    bdayDateEntry = ctk.CTkComboBox(dob_frame, values=dates, font=('Segoe UI', 12), state='readonly', width=80)
-    bdayDateEntry.grid(row=0, column=1, padx=2)
-    bdayDateEntry.set('Day')
+    bdayDateEntry = ttk.Combobox(dob_frame, values=dates, state='readonly', width=10)
+    bdayDateEntry.grid(row=0, column=1, padx=2, pady=0, sticky='ew')
+    bdayDateEntry.current(0)
+    _bind_combobox_scroll(bdayDateEntry, dates)
 
-    bdayYearEntry = ctk.CTkComboBox(dob_frame, values=years, font=('Segoe UI', 12), state='readonly', width=90)
-    bdayYearEntry.grid(row=0, column=2, padx=2)
-    bdayYearEntry.set('Year')
+    bdayYearEntry = ttk.Combobox(dob_frame, values=years, state='readonly', width=12)
+    bdayYearEntry.grid(row=0, column=2, padx=2, pady=0, sticky='ew')
+    bdayYearEntry.current(0)
+    _bind_combobox_scroll(bdayYearEntry, years)
 
     diagnosisLabel = ctk.CTkLabel(form_container, text='Diagnosis', font=('Segoe UI', 16, 'bold'), text_color=TEXT)
     diagnosisLabel.grid(row=10, column=0, padx=(24, 16), pady=8, sticky=W)
@@ -634,8 +946,8 @@ delete_stud_button.grid(row=2, column=0, pady=8, padx=10, sticky='ew')
 update_stud_button = ctk.CTkButton(right_Frame, text='Update Patient', command=Update_patient, **button_kwargs)
 update_stud_button.grid(row=3, column=0, pady=8, padx=10, sticky='ew')
 
-show_stud_button = ctk.CTkButton(right_Frame, text='Show Patients', command=Show_patient, **button_kwargs)
-show_stud_button.grid(row=4, column=0, pady=8, padx=10, sticky='ew')
+import_stud_button = ctk.CTkButton(right_Frame, text='Import Patients', command=Import_data, **button_kwargs)
+import_stud_button.grid(row=4, column=0, pady=8, padx=10, sticky='ew')
 
 export_stud_button = ctk.CTkButton(right_Frame, text='Export Patients', command=Export_data, **button_kwargs)
 export_stud_button.grid(row=5, column=0, pady=8, padx=10, sticky='ew')
@@ -669,9 +981,31 @@ header_frame.grid_columnconfigure(0, weight=1)
 table_heading = ctk.CTkLabel(header_frame, text='Patient Records', font=('Segoe UI', 22, 'bold'), text_color=TEXT, fg_color=ACCENT)
 table_heading.grid(row=0, column=0, sticky='w')
 
-search_header_button = ctk.CTkButton(header_frame, text='Search Patient', command=Search_patient, fg_color=SECONDARY,
-                                     hover_color=PRIMARY, font=('Segoe UI', 13, 'bold'), corner_radius=12, width=140, height=36)
-search_header_button.grid(row=0, column=1, sticky='e', padx=(12, 0))
+control_frame = ctk.CTkFrame(header_frame, fg_color='transparent')
+control_frame.grid(row=0, column=1, sticky='e', padx=(12, 0))
+control_frame.grid_columnconfigure(1, weight=1)
+
+search_field_var = ctk.StringVar(value=list(SEARCH_FIELD_OPTIONS.keys())[0])
+search_field_menu = ctk.CTkOptionMenu(
+    control_frame,
+    values=list(SEARCH_FIELD_OPTIONS.keys()),
+    variable=search_field_var,
+    command=_on_search_field_change,
+    fg_color=SECONDARY,
+    button_color=SECONDARY,
+    button_hover_color=PRIMARY,
+    font=('Segoe UI', 13)
+)
+search_field_menu.grid(row=0, column=0, padx=(0, 8), sticky='e')
+
+search_entry = ctk.CTkEntry(control_frame, placeholder_text='Search patients...', width=220, font=('Segoe UI', 13))
+search_entry.grid(row=0, column=1, padx=(0, 8), sticky='e')
+search_entry.bind('<KeyRelease>', _on_search_entry_change)
+search_entry.bind('<Return>', _on_search_entry_change)
+
+sort_button = ctk.CTkButton(control_frame, text='Sort', command=open_sort_dialog, fg_color=SECONDARY,
+                             hover_color=PRIMARY, font=('Segoe UI', 13, 'bold'), corner_radius=12, width=80, height=36)
+sort_button.grid(row=0, column=2, sticky='e')
 
 table_container = ctk.CTkFrame(left_frame, fg_color=CARD_BG, corner_radius=20)
 table_container.grid(row=1, column=0, sticky='nsew', padx=24, pady=(0, 24))
@@ -735,5 +1069,7 @@ style.configure('Horizontal.TScrollbar', gripcount=0, background=PRIMARY, darkco
 
 patient_table.tag_configure('evenrow', background=CARD_BG)
 patient_table.tag_configure('oddrow', background=TABLE_BG)
+
+Show_patient()
 
 root.mainloop()
