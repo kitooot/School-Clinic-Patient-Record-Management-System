@@ -1,13 +1,37 @@
 from tkinter import *
 import time
 import os
-import ttkthemes
 from tkinter import ttk, messagebox, filedialog
 import pymysql
 from pymysql.err import IntegrityError
 import pandas
 import customtkinter as ctk
 from PIL import ImageTk, Image
+from collections import Counter
+from datetime import datetime
+import tempfile
+import importlib
+
+try:
+    FPDF = importlib.import_module('fpdf').FPDF
+except (ImportError, AttributeError):
+    FPDF = None
+
+try:
+    matplotlib = importlib.import_module('matplotlib')
+    matplotlib.use('TkAgg')
+    Figure = importlib.import_module('matplotlib.figure').Figure
+    FigureCanvasTkAgg = importlib.import_module('matplotlib.backends.backend_tkagg').FigureCanvasTkAgg
+except Exception:
+    Figure = None
+    FigureCanvasTkAgg = None
+    matplotlib = None
+
+try:
+    importlib.import_module('openpyxl')
+    HAS_OPENPYXL = True
+except ImportError:
+    HAS_OPENPYXL = False
 
 PRIMARY = '#2ECC71'   # Mint Green
 SECONDARY = '#16A085' # Deep Teal
@@ -48,6 +72,9 @@ current_sort_field = 'patient_id'
 current_sort_order = 'ASC'
 search_field_var = None
 search_entry = None
+selection_action_var = None
+
+SELECTION_MENU_OPTIONS = ['Selection...', 'Select Specific Patients', 'Select All Patients', 'Clear Selection']
 
 
 def _normalize_mobile(number: str):
@@ -65,29 +92,349 @@ def _normalize_mobile(number: str):
     return f"+63 {digits[2:5]} {digits[5:8]} {digits[8:12]}"
 
 
-def _is_valid_mobile(number: str) -> bool:
-    return _normalize_mobile(number) is not None
-
-
 def _normalize_column_name(column_name: str) -> str:
     return ''.join(ch for ch in str(column_name).lower() if ch.isalnum())
 
-def Export_data():
-    url = filedialog.asksaveasfilename(defaultextension='.csv')
-    if not url:
-        return
-    indexing = patient_table.get_children()
-    new_list = []
-    for index in indexing:
-        content = patient_table.item(index)
-        data_list = content['values']
-        new_list.append(data_list)
 
-    table = pandas.DataFrame(new_list, columns=[
-        'Patient ID', 'Name', 'Mobile no.', 'Email', 'Address', 'Gender', 'Date of Birth', 'Diagnosis', 'Visit Date'
-    ])
-    table.to_csv(url, index=False)
-    messagebox.showinfo('Success', 'Data is saved')
+def _load_all_patients():
+    mycursor.execute(
+        'select patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date from patient'
+    )
+    return mycursor.fetchall()
+
+
+def _compute_analytics():
+    rows = _load_all_patients()
+    total = len(rows)
+
+    gender_counts = Counter()
+    municipality_counts = Counter()
+    diagnosis_counts = Counter()
+    month_counts = Counter()
+    month_labels = {}
+    latest_visit_dt = None
+
+    for row in rows:
+        gender = (row[5] or 'Unspecified').strip() or 'Unspecified'
+        gender_counts[gender] += 1
+
+        address = row[4] or ''
+        parts = [part.strip() for part in address.split(',') if part.strip()]
+        municipality = parts[2] if len(parts) >= 3 else 'Unspecified'
+        municipality_counts[municipality] += 1
+
+        diagnosis = (row[7] or 'Unspecified').strip() or 'Unspecified'
+        diagnosis_counts[diagnosis] += 1
+
+        visit_date = row[8]
+        if visit_date:
+            try:
+                visit_dt = datetime.strptime(visit_date, '%m/%d/%Y')
+            except ValueError:
+                continue
+            key = visit_dt.strftime('%Y-%m')
+            month_counts[key] += 1
+            month_labels[key] = visit_dt.strftime('%B %Y')
+            if latest_visit_dt is None or visit_dt > latest_visit_dt:
+                latest_visit_dt = visit_dt
+
+    visits_by_month = [(month_labels[key], month_counts[key]) for key in sorted(month_counts.keys())]
+
+    analytics = {
+        'total': total,
+        'genders': gender_counts.most_common(),
+        'municipalities': municipality_counts.most_common(10),
+        'diagnoses': diagnosis_counts.most_common(10),
+        'visits_by_month': visits_by_month,
+        'latest_visit': latest_visit_dt.strftime('%B %d, %Y') if latest_visit_dt else 'N/A'
+    }
+    return analytics
+
+
+def _create_analytics_figures(analytics):
+    if Figure is None:
+        return {}
+
+    figures = {}
+
+    gender_data = analytics.get('genders') or []
+    if gender_data:
+        labels = [label for label, _ in gender_data]
+        counts = [count for _, count in gender_data]
+        fig = Figure(figsize=(4.2, 3.2), dpi=100)
+        ax = fig.add_subplot(111)
+
+        def _autopct(pct):
+            return f'{pct:.1f}%' if pct > 0 else ''
+
+        ax.pie(counts, labels=labels, autopct=_autopct, startangle=90)
+        ax.axis('equal')
+        ax.set_title('Gender Distribution', fontsize=12)
+        fig.tight_layout()
+        figures['gender'] = fig
+
+    diagnosis_data = analytics.get('diagnoses') or []
+    top_diagnoses = diagnosis_data[:5]
+    if top_diagnoses:
+        labels = [label for label, _ in top_diagnoses]
+        counts = [count for _, count in top_diagnoses]
+        fig = Figure(figsize=(4.6, 3.2), dpi=100)
+        ax = fig.add_subplot(111)
+        positions = list(range(len(labels)))
+        bars = ax.bar(positions, counts, color=PRIMARY)
+        ax.set_title('Top Diagnoses', fontsize=12)
+        ax.set_ylabel('Patients')
+        ax.set_xticks(positions)
+        ax.set_xticklabels(labels, rotation=30, ha='right')
+        if counts:
+            ax.set_ylim(0, max(counts) + 1)
+        try:
+            ax.bar_label(bars, padding=3, fontsize=9)
+        except Exception:
+            for rect, value in zip(bars, counts):
+                ax.text(rect.get_x() + rect.get_width() / 2, rect.get_height() + 0.1, str(value),
+                        ha='center', va='bottom', fontsize=9)
+        ax.grid(axis='y', linestyle='--', alpha=0.2)
+        fig.tight_layout()
+        figures['diagnosis'] = fig
+
+    visits_data = analytics.get('visits_by_month') or []
+    recent_visits = visits_data[-12:]
+    if recent_visits:
+        labels = [label for label, _ in recent_visits]
+        counts = [count for _, count in recent_visits]
+        positions = list(range(len(labels)))
+        fig = Figure(figsize=(6.0, 3.2), dpi=100)
+        ax = fig.add_subplot(111)
+        ax.plot(positions, counts, marker='o', color=SECONDARY, linewidth=2)
+        ax.set_title('Clinic Visits by Month', fontsize=12)
+        ax.set_ylabel('Patients Seen')
+        ax.set_xticks(positions)
+        ax.set_xticklabels(labels, rotation=35, ha='right')
+        ax.grid(True, linestyle='--', alpha=0.3)
+        fig.tight_layout()
+        figures['visits'] = fig
+
+    municipality_data = analytics.get('municipalities') or []
+    top_municipalities = municipality_data[:5]
+    if top_municipalities:
+        labels = [label for label, _ in top_municipalities]
+        counts = [count for _, count in top_municipalities]
+        fig = Figure(figsize=(4.6, 3.2), dpi=100)
+        ax = fig.add_subplot(111)
+        positions = list(range(len(labels)))
+        bars = ax.barh(positions, counts, color=PRIMARY)
+        ax.set_title('Top Municipalities', fontsize=12)
+        ax.set_xlabel('Patients')
+        ax.set_yticks(positions)
+        ax.set_yticklabels(labels)
+        if counts:
+            ax.set_xlim(0, max(counts) + 1)
+        try:
+            ax.bar_label(bars, padding=3, fontsize=9)
+        except Exception:
+            for rect, value in zip(bars, counts):
+                ax.text(rect.get_width() + 0.1, rect.get_y() + rect.get_height() / 2, str(value),
+                        va='center', fontsize=9)
+        ax.grid(axis='x', linestyle='--', alpha=0.2)
+        fig.tight_layout()
+        figures['municipality'] = fig
+
+    return figures
+
+
+def _export_patient_records_excel(file_path: str):
+    rows = _load_all_patients()
+    if not rows:
+        raise ValueError('There are no patient records to export.')
+
+    headers = ['Patient ID', 'Name', 'Mobile No.', 'Email', 'Address', 'Gender', 'Date of Birth', 'Diagnosis', 'Visit Date']
+    formatted_rows = []
+    for row in rows:
+        formatted_rows.append([
+            str(row[0] or ''),
+            str(row[1] or ''),
+            _normalize_mobile(row[2]) or str(row[2] or ''),
+            str(row[3] or ''),
+            str(row[4] or ''),
+            str(row[5] or ''),
+            str(row[6] or ''),
+            str(row[7] or ''),
+            str(row[8] or '')
+        ])
+
+    table = pandas.DataFrame(formatted_rows, columns=headers)
+    table.to_excel(file_path, index=False)
+
+
+def _export_patient_analytics_pdf(file_path: str):
+    analytics = _compute_analytics()
+
+    pdf = FPDF(unit='mm', format='A4')
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    pdf.set_font('Arial', 'B', 16)
+    pdf.cell(0, 10, 'Patient Analytics', 0, 1, 'C')
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 8, f'Generated on {datetime.now().strftime("%B %d, %Y %I:%M %p")}', 0, 1, 'C')
+    pdf.ln(4)
+
+    if analytics['total'] == 0:
+        pdf.set_font('Arial', '', 12)
+        pdf.cell(0, 8, 'No patient records available for analytics.', 0, 1, 'C')
+        pdf.output(file_path)
+        return
+
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(0, 8, f"Total Patients: {analytics['total']}", 0, 1)
+    pdf.set_font('Arial', '', 11)
+    pdf.cell(0, 6, f"Most Recent Visit: {analytics['latest_visit']}", 0, 1)
+    pdf.ln(3)
+
+    figures = _create_analytics_figures(analytics)
+    chart_titles = {
+        'gender': 'Gender Distribution',
+        'diagnosis': 'Top Diagnoses',
+        'municipality': 'Top Municipalities',
+        'visits': 'Clinic Visits by Month'
+    }
+
+    temp_files = []
+    try:
+        for key in ('gender', 'diagnosis', 'municipality', 'visits'):
+            fig = figures.get(key)
+            title = chart_titles.get(key, key.title())
+
+            if fig is None:
+                pdf.add_page()
+                pdf.set_font('Arial', 'B', 14)
+                pdf.cell(0, 10, title, 0, 1, 'C')
+                pdf.set_font('Arial', '', 11)
+                pdf.ln(4)
+                pdf.multi_cell(0, 7, 'No data available for this chart.')
+                continue
+
+            tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+            temp_files.append(tmp_file.name)
+            fig.savefig(tmp_file.name, dpi=180, bbox_inches='tight')
+            tmp_file.close()
+
+            pdf.add_page()
+            pdf.set_font('Arial', 'B', 14)
+            pdf.cell(0, 10, title, 0, 1, 'C')
+            pdf.ln(4)
+
+            max_width = pdf.w - 20
+            pdf.image(tmp_file.name, x=10, w=max_width)
+
+        pdf.output(file_path)
+    finally:
+        for path in temp_files:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def Export_data():
+    export_window = ctk.CTkToplevel()
+    export_window.title('Export Options')
+    export_window.grab_set()
+    export_window.resizable(False, False)
+    export_window.configure(fg_color=ACCENT)
+    export_window.transient(root)
+
+    container = ctk.CTkFrame(export_window, fg_color=CARD_BG, corner_radius=18)
+    container.grid(row=0, column=0, padx=26, pady=24)
+    container.grid_columnconfigure(0, weight=1)
+
+    ctk.CTkLabel(container, text='Choose what to export', font=('Segoe UI', 16, 'bold'), text_color=TEXT).grid(
+        row=0, column=0, padx=12, pady=(6, 12), sticky='ew'
+    )
+
+    choice_var = ctk.StringVar(value='records')
+
+    records_radio = ctk.CTkRadioButton(
+        container, text='Patient Records (Excel)', value='records', variable=choice_var,
+        font=('Segoe UI', 13), text_color=TEXT
+    )
+    records_radio.grid(row=1, column=0, padx=12, pady=4, sticky='w')
+
+    analytics_radio = ctk.CTkRadioButton(
+        container, text='Patient Analytics (PDF)', value='analytics', variable=choice_var,
+        font=('Segoe UI', 13), text_color=TEXT
+    )
+    analytics_radio.grid(row=2, column=0, padx=12, pady=4, sticky='w')
+
+    button_row = ctk.CTkFrame(container, fg_color='transparent')
+    button_row.grid(row=3, column=0, padx=12, pady=(18, 4), sticky='ew')
+    button_row.grid_columnconfigure((0, 1), weight=1)
+
+    def _perform_export():
+        selection = choice_var.get()
+        export_window.destroy()
+
+        if selection == 'records':
+            if not HAS_OPENPYXL:
+                messagebox.showerror(
+                    'Missing Dependency',
+                    'Excel export requires the "openpyxl" package. Install it with "pip install openpyxl" and try again.'
+                )
+                return
+            file_path = filedialog.asksaveasfilename(
+                defaultextension='.xlsx',
+                filetypes=[('Excel Files', '*.xlsx')]
+            )
+            if not file_path:
+                return
+            try:
+                _export_patient_records_excel(file_path)
+            except ValueError as exc:
+                messagebox.showinfo('Export', str(exc))
+            except Exception as exc:
+                messagebox.showerror('Error', f'Failed to export Excel file: {exc}')
+            else:
+                messagebox.showinfo('Success', f'Export completed: {file_path}')
+        else:
+            if FPDF is None:
+                messagebox.showerror(
+                    'Missing Dependency',
+                    'Analytics export to PDF requires the "fpdf" package. Install it with "pip install fpdf" and try again.'
+                )
+                return
+            if Figure is None:
+                messagebox.showerror(
+                    'Missing Dependency',
+                    'Analytics export to PDF requires the "matplotlib" package. Install it with "pip install matplotlib" and try again.'
+                )
+                return
+            file_path = filedialog.asksaveasfilename(
+                defaultextension='.pdf',
+                filetypes=[('PDF Files', '*.pdf')]
+            )
+            if not file_path:
+                return
+            try:
+                _export_patient_analytics_pdf(file_path)
+            except ValueError as exc:
+                messagebox.showinfo('Export', str(exc))
+            except Exception as exc:
+                messagebox.showerror('Error', f'Failed to export PDF: {exc}')
+            else:
+                messagebox.showinfo('Success', f'Export completed: {file_path}')
+
+    export_button = ctk.CTkButton(
+        button_row, text='Export', command=_perform_export, fg_color=SECONDARY,
+        hover_color=PRIMARY, corner_radius=12, font=('Segoe UI', 13, 'bold')
+    )
+    export_button.grid(row=0, column=0, padx=(0, 6), sticky='ew')
+
+    cancel_button = ctk.CTkButton(
+        button_row, text='Cancel', command=export_window.destroy, fg_color='#95A5A6',
+        hover_color='#7F8C8D', corner_radius=12, font=('Segoe UI', 13, 'bold')
+    )
+    cancel_button.grid(row=0, column=1, padx=(6, 0), sticky='ew')
 
 
 def _populate_table(rows):
@@ -118,7 +465,13 @@ def _fetch_patients(filter_field=None, filter_term=None):
         query += f' where LOWER({filter_field}) LIKE %s'
         params.append(f"%{filter_term.lower()}%")
 
-    if sort_field in DATE_SORT_FIELDS:
+    if sort_field == 'patient_id':
+        numeric_expr = "CASE WHEN patient_id REGEXP '^[0-9]+$' THEN CAST(patient_id AS UNSIGNED) ELSE NULL END"
+        query += (
+            f" order by ({numeric_expr} IS NULL) ASC, "
+            f"{numeric_expr} {sort_order}, patient_id {sort_order}"
+        )
+    elif sort_field in DATE_SORT_FIELDS:
         query += f' order by STR_TO_DATE({sort_field}, "%m/%d/%Y") {sort_order}'
     else:
         query += f' order by {sort_field} {sort_order}'
@@ -146,23 +499,20 @@ def _bind_combobox_scroll(combobox, options):
     combobox.bind('<MouseWheel>', _on_mousewheel)
 
 
-def Get_previous_dob():
-    indexing = patient_table.focus()
-    if not indexing:
-        return ''
-    content = patient_table.item(indexing)
-    list_data = content['values']
-    if len(list_data) <= 6:
-        return ''
-    previous_dob = list_data[6]
-    return previous_dob
-
-
 def Update_patient():
-    selection = patient_table.focus()
-    if not selection:
+    selected_items = patient_table.selection()
+    if not selected_items:
         messagebox.showerror('Error', 'Please select a patient to update.')
         return
+
+    if len(selected_items) > 1:
+        messagebox.showerror(
+            'Error',
+            'Update Patient is available only when a single patient is selected. Please adjust your selection.'
+        )
+        return
+
+    selection = selected_items[0]
 
     content = patient_table.item(selection)
     list_data = content.get('values', [])
@@ -378,27 +728,267 @@ def Show_patient():
     _populate_table(fetched_data)
 
 
-def Delete_patient():
-    selection = patient_table.focus()
-    if not selection:
-        messagebox.showerror('Error', 'Please select a patient to delete.')
+def Select_all_patients():
+    items = patient_table.get_children()
+    if not items:
+        messagebox.showinfo('Select All', 'No patient records available to select.')
         return
 
-    content = patient_table.item(selection)
-    values = content.get('values', [])
-    if not values:
+    patient_table.selection_set(items)
+    patient_table.focus(items[0])
+    patient_table.see(items[0])
+
+
+def Clear_selected_patients():
+    selections = patient_table.selection()
+    if not selections:
+        if patient_table.get_children():
+            messagebox.showinfo('Selection', 'No patients are currently selected.')
+        else:
+            messagebox.showinfo('Selection', 'No patient records available.')
+        return
+    patient_table.selection_remove(selections)
+
+
+def Select_specific_patients():
+    items = patient_table.get_children()
+    if not items:
+        messagebox.showinfo('Select Patients', 'No patient records available to select.')
+        return
+
+    records = []
+    for item in items:
+        values = patient_table.item(item).get('values', [])
+        if not values:
+            continue
+        patient_id = str(values[0])
+        name = str(values[1]) if len(values) > 1 else ''
+        records.append((item, patient_id, name))
+
+    if not records:
+        messagebox.showinfo('Select Patients', 'No patient records available to select.')
+        return
+
+    selection_window = ctk.CTkToplevel()
+    selection_window.title('Select Patients')
+    selection_window.grab_set()
+    selection_window.resizable(False, False)
+    selection_window.configure(fg_color=ACCENT)
+    selection_window.transient(root)
+    selection_window.geometry('620x580')
+    selection_window.grid_rowconfigure(0, weight=1)
+    selection_window.grid_columnconfigure(0, weight=1)
+
+    container = ctk.CTkFrame(selection_window, fg_color=CARD_BG, corner_radius=18)
+    container.grid(row=0, column=0, padx=26, pady=24, sticky='nsew')
+    container.grid_columnconfigure(0, weight=1)
+    container.grid_rowconfigure(1, weight=1)
+
+    ctk.CTkLabel(container, text='Select Patients', font=('Segoe UI', 18, 'bold'), text_color=TEXT).grid(
+        row=0, column=0, padx=12, pady=(6, 10), sticky='ew'
+    )
+
+    list_frame = ctk.CTkFrame(container, fg_color='transparent')
+    list_frame.grid(row=1, column=0, sticky='nsew')
+    list_frame.grid_columnconfigure(0, weight=1)
+    list_frame.grid_rowconfigure(0, weight=1)
+
+    scrollbar = ttk.Scrollbar(list_frame, orient=VERTICAL)
+    scrollbar.grid(row=0, column=1, sticky='ns')
+
+    listbox = Listbox(
+        list_frame,
+        selectmode=MULTIPLE,
+        exportselection=False,
+        width=52,
+        height=18,
+        font=('Segoe UI', 13)
+    )
+    listbox.grid(row=0, column=0, sticky='nsew')
+    listbox.configure(yscrollcommand=scrollbar.set)
+    scrollbar.config(command=listbox.yview)
+
+    for record in records:
+        item_id, patient_id, name = record
+        display = f'{patient_id} - {name}' if name else patient_id
+        listbox.insert(END, display)
+
+    button_row = ctk.CTkFrame(container, fg_color='transparent')
+    button_row.grid(row=2, column=0, padx=12, pady=(16, 4), sticky='ew')
+    button_row.grid_columnconfigure((0, 1), weight=1)
+
+    def _apply_selection():
+        selections = listbox.curselection()
+        if not selections:
+            messagebox.showerror('Selection', 'Please choose at least one patient.', parent=selection_window)
+            return
+        selected_items = [records[index][0] for index in selections]
+        patient_table.selection_set(selected_items)
+        patient_table.focus(selected_items[0])
+        patient_table.see(selected_items[0])
+        selection_window.destroy()
+
+    apply_button = ctk.CTkButton(button_row, text='Apply', command=_apply_selection, fg_color=SECONDARY,
+                                 hover_color=PRIMARY, corner_radius=12, font=('Segoe UI', 13, 'bold'))
+    apply_button.grid(row=0, column=0, padx=(0, 6), sticky='ew')
+
+    cancel_button = ctk.CTkButton(button_row, text='Cancel', command=selection_window.destroy, fg_color='#95A5A6',
+                                  hover_color='#7F8C8D', corner_radius=12, font=('Segoe UI', 13, 'bold'))
+    cancel_button.grid(row=0, column=1, padx=(6, 0), sticky='ew')
+
+
+def _on_selection_action(choice):
+    if choice == SELECTION_MENU_OPTIONS[0]:
+        return
+
+    if choice == 'Select Specific Patients':
+        Select_specific_patients()
+    elif choice == 'Select All Patients':
+        Select_all_patients()
+    elif choice == 'Clear Selection':
+        Clear_selected_patients()
+
+    if selection_action_var is not None:
+        selection_action_var.set(SELECTION_MENU_OPTIONS[0])
+
+
+def Delete_patient():
+    selections = patient_table.selection()
+    if not selections:
+        messagebox.showerror('Error', 'Please select at least one patient to delete.')
+        return
+
+    patient_ids = []
+    for item in selections:
+        content = patient_table.item(item)
+        values = content.get('values', [])
+        if not values:
+            continue
+        patient_ids.append(str(values[0]))
+
+    if not patient_ids:
         messagebox.showerror('Error', 'Unable to read the selected patient data.')
         return
 
-    confirm = messagebox.askyesno('Delete Patient', f'Do you want to delete patient {values[0]}?')
+    if len(patient_ids) == 1:
+        prompt = f'Do you want to delete patient {patient_ids[0]}?'
+        title = 'Delete Patient'
+    else:
+        prompt = f'Delete the {len(patient_ids)} selected patients? This cannot be undone.'
+        title = 'Delete Patients'
+
+    confirm = messagebox.askyesno(title, prompt)
     if not confirm:
         return
 
-    query = 'delete from patient where patient_id=%s'
-    mycursor.execute(query, (values[0],))
-    con.commit()
-    messagebox.showinfo('Deleted', f'Patient {values[0]} deleted successfully')
+    try:
+        for patient_id in patient_ids:
+            mycursor.execute('delete from patient where patient_id=%s', (patient_id,))
+        con.commit()
+    except Exception as exc:
+        con.rollback()
+        messagebox.showerror('Error', f'Failed to delete selected patients: {exc}')
+        return
+
     Show_patient()
+    if len(patient_ids) == 1:
+        messagebox.showinfo('Deleted', f'Patient {patient_ids[0]} deleted successfully.')
+    else:
+        messagebox.showinfo('Deleted', f'Deleted {len(patient_ids)} patients successfully.')
+
+
+def Show_analytics_window():
+    analytics = _compute_analytics()
+
+    if analytics['total'] == 0:
+        messagebox.showinfo('Patient Analytics', 'No patient records available to analyze yet.')
+        return
+
+    if Figure is None or FigureCanvasTkAgg is None:
+        messagebox.showerror(
+            'Missing Dependency',
+            'Analytics charts require the "matplotlib" package. Install it with "pip install matplotlib" and try again.'
+        )
+        return
+
+    analytics_window = ctk.CTkToplevel()
+    analytics_window.title('Patient Analytics')
+    analytics_window.grab_set()
+    analytics_window.resizable(False, False)
+    analytics_window.configure(fg_color=ACCENT)
+    analytics_window.transient(root)
+
+    container = ctk.CTkFrame(analytics_window, fg_color=CARD_BG, corner_radius=18)
+    container.grid(row=0, column=0, padx=26, pady=24, sticky='nsew')
+    container.grid_columnconfigure(0, weight=1)
+    container.grid_rowconfigure(2, weight=1)
+
+    ctk.CTkLabel(container, text='Patient Analytics Overview', font=('Segoe UI', 18, 'bold'), text_color=TEXT).grid(
+        row=0, column=0, padx=18, pady=(10, 6), sticky='ew'
+    )
+
+    summary_frame = ctk.CTkFrame(container, fg_color='transparent')
+    summary_frame.grid(row=1, column=0, padx=18, pady=(4, 10), sticky='ew')
+    summary_frame.grid_columnconfigure(0, weight=1)
+
+    ctk.CTkLabel(
+        summary_frame,
+        text=f"Total Patients: {analytics['total']}",
+        font=('Segoe UI', 14, 'bold'),
+        text_color=TEXT
+    ).grid(row=0, column=0, sticky='w')
+
+    ctk.CTkLabel(
+        summary_frame,
+        text=f"Most Recent Visit: {analytics['latest_visit']}",
+        font=('Segoe UI', 13),
+        text_color=TEXT
+    ).grid(row=1, column=0, pady=(2, 0), sticky='w')
+
+    chart_frame = ctk.CTkFrame(container, fg_color='transparent')
+    chart_frame.grid(row=2, column=0, padx=18, pady=(4, 10), sticky='nsew')
+    chart_frame.grid_columnconfigure((0, 1), weight=1)
+    chart_frame.grid_rowconfigure((0, 1), weight=1)
+
+    pie_frame = ctk.CTkFrame(chart_frame, fg_color=CARD_BG, corner_radius=16)
+    pie_frame.grid(row=0, column=0, padx=(0, 8), pady=(0, 8), sticky='nsew')
+    bar_frame = ctk.CTkFrame(chart_frame, fg_color=CARD_BG, corner_radius=16)
+    bar_frame.grid(row=0, column=1, padx=(8, 0), pady=(0, 8), sticky='nsew')
+    municipality_frame = ctk.CTkFrame(chart_frame, fg_color=CARD_BG, corner_radius=16)
+    municipality_frame.grid(row=1, column=0, padx=(0, 8), pady=(8, 0), sticky='nsew')
+    line_frame = ctk.CTkFrame(chart_frame, fg_color=CARD_BG, corner_radius=16)
+    line_frame.grid(row=1, column=1, padx=(8, 0), pady=(8, 0), sticky='nsew')
+
+    chart_canvases = []
+    figures = _create_analytics_figures(analytics)
+
+    chart_specs = [
+        ('gender', 'No gender data available.', pie_frame),
+        ('diagnosis', 'No diagnosis data available.', bar_frame),
+        ('municipality', 'No municipality data available.', municipality_frame),
+        ('visits', 'No visit history available.', line_frame)
+    ]
+
+    for key, empty_text, frame in chart_specs:
+        fig = figures.get(key)
+        if fig is None:
+            ctk.CTkLabel(frame, text=empty_text, font=('Segoe UI', 12), text_color=TEXT).pack(
+                expand=True, padx=18, pady=18
+            )
+            continue
+
+        canvas = FigureCanvasTkAgg(fig, master=frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=BOTH, expand=True)
+        chart_canvases.append(canvas)
+
+    analytics_window._chart_canvases = chart_canvases  # keep references
+
+    close_button = ctk.CTkButton(
+        container, text='Close', command=analytics_window.destroy, fg_color=SECONDARY,
+        hover_color=PRIMARY, corner_radius=14, font=('Segoe UI', 13, 'bold')
+    )
+    close_button.grid(row=3, column=0, padx=18, pady=(6, 4), sticky='ew')
 
 
 def Show_patient_details(event=None):
@@ -528,13 +1118,25 @@ def open_sort_dialog():
 def Import_data():
     filepath = filedialog.askopenfilename(
         title='Import Patient Data',
-        filetypes=[('CSV Files', '*.csv'), ('All Files', '*.*')]
+        filetypes=[('Excel Files', '*.xlsx;*.xlsm;*.xltx;*.xltm'), ('CSV Files', '*.csv'), ('All Files', '*.*')]
     )
     if not filepath:
         return
 
+    _, ext = os.path.splitext(filepath)
+    ext = ext.lower()
+
     try:
-        data_frame = pandas.read_csv(filepath)
+        if ext in ('.xlsx', '.xlsm', '.xltx', '.xltm'):
+            if not HAS_OPENPYXL:
+                messagebox.showerror(
+                    'Missing Dependency',
+                    'Excel import requires the "openpyxl" package. Install it with "pip install openpyxl" and try again.'
+                )
+                return
+            data_frame = pandas.read_excel(filepath, dtype=str)
+        else:
+            data_frame = pandas.read_csv(filepath, dtype=str)
     except Exception as exc:
         messagebox.showerror('Error', f'Unable to read the selected file: {exc}')
         return
@@ -952,8 +1554,11 @@ import_stud_button.grid(row=4, column=0, pady=8, padx=10, sticky='ew')
 export_stud_button = ctk.CTkButton(right_Frame, text='Export Patients', command=Export_data, **button_kwargs)
 export_stud_button.grid(row=5, column=0, pady=8, padx=10, sticky='ew')
 
+analytics_button = ctk.CTkButton(right_Frame, text='View Analytics', command=Show_analytics_window, **button_kwargs)
+analytics_button.grid(row=6, column=0, pady=8, padx=10, sticky='ew')
+
 exit_button = ctk.CTkButton(right_Frame, text='Exit', command=Exit, fg_color='#e74c3c', hover_color='#c0392b', text_color='white', font=('Segoe UI', 14, 'bold'), corner_radius=14, height=44)
-exit_button.grid(row=6, column=0, pady=12, padx=10, sticky='ew')
+exit_button.grid(row=7, column=0, pady=12, padx=10, sticky='ew')
 
 left_frame = ctk.CTkFrame(root, fg_color=ACCENT, corner_radius=24)
 # Compute left_frame position depending on which side the sidebar is on
@@ -984,6 +1589,7 @@ table_heading.grid(row=0, column=0, sticky='w')
 control_frame = ctk.CTkFrame(header_frame, fg_color='transparent')
 control_frame.grid(row=0, column=1, sticky='e', padx=(12, 0))
 control_frame.grid_columnconfigure(1, weight=1)
+control_frame.grid_columnconfigure(3, weight=0)
 
 search_field_var = ctk.StringVar(value=list(SEARCH_FIELD_OPTIONS.keys())[0])
 search_field_menu = ctk.CTkOptionMenu(
@@ -1007,6 +1613,20 @@ sort_button = ctk.CTkButton(control_frame, text='Sort', command=open_sort_dialog
                              hover_color=PRIMARY, font=('Segoe UI', 13, 'bold'), corner_radius=12, width=80, height=36)
 sort_button.grid(row=0, column=2, sticky='e')
 
+selection_action_var = ctk.StringVar(value=SELECTION_MENU_OPTIONS[0])
+selection_menu = ctk.CTkOptionMenu(
+    control_frame,
+    values=SELECTION_MENU_OPTIONS,
+    variable=selection_action_var,
+    command=_on_selection_action,
+    fg_color=SECONDARY,
+    button_color=SECONDARY,
+    button_hover_color=PRIMARY,
+    font=('Segoe UI', 13),
+    width=125
+)
+selection_menu.grid(row=0, column=3, padx=(8, 0), sticky='e')
+
 table_container = ctk.CTkFrame(left_frame, fg_color=CARD_BG, corner_radius=20)
 table_container.grid(row=1, column=0, sticky='nsew', padx=24, pady=(0, 24))
 
@@ -1021,7 +1641,7 @@ scroll_bar_x.pack(side=BOTTOM, fill=X)
 
 patient_table = ttk.Treeview(tree_frame, columns=(
     'Patient ID', 'Name', 'Mobile No.', 'Email', 'Address', 'Gender', 'Date of Birth', 'Diagnosis', 'Visit Date'
-), xscrollcommand=scroll_bar_x.set, yscrollcommand=scroll_bar_y.set, show='headings')
+), xscrollcommand=scroll_bar_x.set, yscrollcommand=scroll_bar_y.set, show='headings', selectmode='extended')
 patient_table.pack(fill=BOTH, expand=1)
 
 patient_table.bind('<Double-1>', Show_patient_details)
