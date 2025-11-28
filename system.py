@@ -12,6 +12,24 @@ from datetime import datetime
 import tempfile
 import importlib
 
+from modules.config import (
+    PRIMARY,
+    SECONDARY,
+    BG,
+    ACCENT,
+    TEXT,
+    TABLE_BG,
+    SIDEBAR_BG,
+    HEADER_BG,
+    CARD_BG,
+    SIDEBAR_SIDE,
+    SEARCH_FIELD_OPTIONS,
+    SORT_FIELD_OPTIONS,
+    SORT_FIELD_LABELS,
+    DATE_SORT_FIELDS,
+    SELECTION_MENU_OPTIONS,
+)
+
 try:
     FPDF = importlib.import_module('fpdf').FPDF
 except (ImportError, AttributeError):
@@ -33,48 +51,11 @@ try:
 except ImportError:
     HAS_OPENPYXL = False
 
-PRIMARY = '#2ECC71'   # Mint Green
-SECONDARY = '#16A085' # Deep Teal
-BG = '#ECF0F1'        # Light Gray White (used for contrast when needed)
-ACCENT = '#A3E4D7'    # Soft Mint
-TEXT = '#2C3E50'      # Deep Gray Blue
-TABLE_BG = '#F5FFFB'  # Pale Mint for table rows
-SIDEBAR_BG = SECONDARY
-HEADER_BG = PRIMARY
-CARD_BG = '#FFFFFF'
-
-# Sidebar placement: set to 'right' or 'left'
-SIDEBAR_SIDE = 'left'
-
-SEARCH_FIELD_OPTIONS = {
-    'Patient ID': 'patient_id',
-    'Name': 'name',
-    'Mobile No.': 'mobile',
-    'Email': 'email',
-    'Address': 'address',
-    'Gender': 'gender',
-    'Date of Birth': 'dob',
-    'Diagnosis': 'diagnosis',
-    'Visit Date': 'visit_date'
-}
-
-SORT_FIELD_OPTIONS = {
-    'Patient ID': 'patient_id',
-    'Name': 'name',
-    'Date of Birth': 'dob',
-    'Visit Date': 'visit_date'
-}
-
-SORT_FIELD_LABELS = {value: key for key, value in SORT_FIELD_OPTIONS.items()}
-DATE_SORT_FIELDS = {'dob', 'visit_date'}
-
 current_sort_field = 'patient_id'
 current_sort_order = 'ASC'
 search_field_var = None
 search_entry = None
 selection_action_var = None
-
-SELECTION_MENU_OPTIONS = ['Selection...', 'Select Specific Patients', 'Select All Patients', 'Clear Selection']
 
 
 def _normalize_mobile(number: str):

@@ -5,18 +5,13 @@ import os
 import customtkinter as ctk
 from PIL import Image
 
+from modules.config import PRIMARY, SECONDARY, BG, ACCENT, TEXT, CARD_BG
+
 
 root = ctk.CTk()
 root.title('School Clinic - Staff Login')
 root.geometry('550x550+300+200')
 ctk.set_appearance_mode('light')
-# Color palette aligned with the main system window
-PRIMARY = '#2ECC71'   # Mint Green
-SECONDARY = '#16A085' # Deep Teal
-BG = '#ECF0F1'        # Light Gray White
-ACCENT = '#A3E4D7'    # Soft Mint
-TEXT = '#2C3E50'      # Deep Gray Blue
-CARD_BG = '#FFFFFF'
 
 root.configure(bg=BG)
 root.resizable(False, False)
