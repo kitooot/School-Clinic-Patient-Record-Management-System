@@ -1,13 +1,13 @@
-from tkinter import *
-from tkinter import messagebox
-import ast
-import os
-import customtkinter as ctk
-from PIL import Image
+from tkinter import * # Import all necessary tkinter components
+from tkinter import messagebox # For displaying message boxes
+import ast # For safely evaluating string representations of Python data structures
+import os # For file path operations
+import customtkinter as ctk # Custom Tkinter for enhanced UI components
+from PIL import Image  # For image handling
 
-from modules.config import PRIMARY, SECONDARY, BG, ACCENT, TEXT, CARD_BG
+from config import PRIMARY, SECONDARY, BG, ACCENT, TEXT, CARD_BG # Import color constants from config
 
-
+# Initialize main window
 root = ctk.CTk()
 root.title('School Clinic - Staff Login')
 root.geometry('550x550+300+200')
@@ -21,13 +21,14 @@ PLACEHOLDER_COLOR = '#95a5a6'
 USER_PH = 'Enter username'
 PASS_PH = 'Enter password'
 
-
+# Helper function to load icons with error handling
 def _load_icon(path, size=(20, 20)):
     try:
         return ctk.CTkImage(Image.open(path), size=size)
     except Exception:
         return None
 
+# Function to handle sign-in logic
 def sign_in():
     username = username_entry.get().strip()
     passwrd = password_entry.get()
@@ -59,10 +60,12 @@ def sign_in():
     else:
         messagebox.showerror('Invalid', 'Invalid staff username or password')
 
+# Function to switch to sign-up window
 def signup():
     root.destroy()
     import signup
 
+# Function to toggle password visibility
 def toggle_password():
     # Respect placeholders: only toggle when real text is present
     if show_password.get():
@@ -81,14 +84,14 @@ show_password = BooleanVar(value=False)
 hide_icon = _load_icon('hidden.png')
 show_icon = _load_icon('eye.png')
 
-
+# Function to load logo image with fallback
 def _load_logo(filenames=('logoo.png')):
     try:
         img_pil = Image.open('logoo.png')
         img_pil.thumbnail((120, 120))  
         return ctk.CTkImage(img_pil, size=img_pil.size)
     except Exception:
-        placeholder = Image.new('RGBA', (120, 120), ACCENT)  
+        placeholder = Image.new('RGBA', (120, 120), ACCENT)  # Create a placeholder image with ACCENT color
         return ctk.CTkImage(placeholder, size=(120, 120))
 logo_image = _load_logo()
 logo_frame = ctk.CTkFrame(root, fg_color='transparent' ,corner_radius=20, width=120, height=120, border_width=2, border_color=PRIMARY)

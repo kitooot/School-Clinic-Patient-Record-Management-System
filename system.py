@@ -1,18 +1,18 @@
-from tkinter import *
-import time
-import os
-from tkinter import ttk, messagebox, filedialog
-import pymysql
-from pymysql.err import IntegrityError
-import pandas
-import customtkinter as ctk
-from PIL import ImageTk, Image
-from collections import Counter
-from datetime import datetime
-import tempfile
-import importlib
+from tkinter import * # Main GUI library
+import time # Time-related functions
+import os # Operating system interfaces
+from tkinter import ttk, messagebox, filedialog # GUI widgets and dialogs
+import pymysql # MySQL database connector
+from pymysql.err import IntegrityError # Specific database error
+import pandas # Data manipulation library
+import customtkinter as ctk # Custom themed tkinter
+from PIL import ImageTk, Image # Image handling
+from collections import Counter # Counting hashable objects
+from datetime import datetime # Date and time manipulation
+import tempfile # Temporary file management
+import importlib # Dynamic module importing
 
-from modules.config import (
+from config import ( # Database and UI configuration
     PRIMARY,
     SECONDARY,
     BG,
@@ -56,8 +56,8 @@ current_sort_order = 'ASC'
 search_field_var = None
 search_entry = None
 selection_action_var = None
-
-
+    
+# Format a raw phone number into the standardized +63 grouping.
 def _normalize_mobile(number: str):
     if not number:
         return None
@@ -73,10 +73,19 @@ def _normalize_mobile(number: str):
     return f"+63 {digits[2:5]} {digits[5:8]} {digits[8:12]}"
 
 
+# Normalize CSV column headers to a consistent lowercase identifier.
 def _normalize_column_name(column_name: str) -> str:
     return ''.join(ch for ch in str(column_name).lower() if ch.isalnum())
 
 
+# Convert arbitrary text into proper-case format for presentation.
+def _to_proper_case(value: str) -> str:
+    if not value:
+        return ''
+    return str(value).strip().title()
+
+
+# Fetch every patient record from the database for downstream features.
 def _load_all_patients():
     mycursor.execute(
         'select patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date from patient'
@@ -84,6 +93,7 @@ def _load_all_patients():
     return mycursor.fetchall()
 
 
+# Build aggregate metrics used by the analytics views and exports.
 def _compute_analytics():
     rows = _load_all_patients()
     total = len(rows)
@@ -96,15 +106,21 @@ def _compute_analytics():
     latest_visit_dt = None
 
     for row in rows:
-        gender = (row[5] or 'Unspecified').strip() or 'Unspecified'
+        gender_value = _to_proper_case(row[5])
+        gender = gender_value or 'Unspecified'
         gender_counts[gender] += 1
 
         address = row[4] or ''
-        parts = [part.strip() for part in address.split(',') if part.strip()]
+        parts = []
+        for part in address.split(','):
+            cleaned = _to_proper_case(part)
+            if cleaned:
+                parts.append(cleaned)
         municipality = parts[2] if len(parts) >= 3 else 'Unspecified'
         municipality_counts[municipality] += 1
 
-        diagnosis = (row[7] or 'Unspecified').strip() or 'Unspecified'
+        diagnosis_value = _to_proper_case(row[7])
+        diagnosis = diagnosis_value or 'Unspecified'
         diagnosis_counts[diagnosis] += 1
 
         visit_date = row[8]
@@ -132,6 +148,7 @@ def _compute_analytics():
     return analytics
 
 
+# Render matplotlib figures backing the analytics charts.
 def _create_analytics_figures(analytics):
     if Figure is None:
         return {}
@@ -145,6 +162,7 @@ def _create_analytics_figures(analytics):
         fig = Figure(figsize=(4.2, 3.2), dpi=100)
         ax = fig.add_subplot(111)
 
+        # Show percentage labels only when a slice has a value.
         def _autopct(pct):
             return f'{pct:.1f}%' if pct > 0 else ''
 
@@ -224,6 +242,7 @@ def _create_analytics_figures(analytics):
     return figures
 
 
+# Save patient data to an Excel workbook for offline use.
 def _export_patient_records_excel(file_path: str):
     rows = _load_all_patients()
     if not rows:
@@ -247,7 +266,7 @@ def _export_patient_records_excel(file_path: str):
     table = pandas.DataFrame(formatted_rows, columns=headers)
     table.to_excel(file_path, index=False)
 
-
+# Generate a PDF report summarizing patient analytics and charts.
 def _export_patient_analytics_pdf(file_path: str):
     analytics = _compute_analytics()
 
@@ -318,6 +337,7 @@ def _export_patient_analytics_pdf(file_path: str):
                 pass
 
 
+# Present export options for staff to download records or analytics.
 def Export_data():
     export_window = ctk.CTkToplevel()
     export_window.title('Export Options')
@@ -352,6 +372,7 @@ def Export_data():
     button_row.grid(row=3, column=0, padx=12, pady=(18, 4), sticky='ew')
     button_row.grid_columnconfigure((0, 1), weight=1)
 
+    # Handle the selected export action and persist files as needed.
     def _perform_export():
         selection = choice_var.get()
         export_window.destroy()
@@ -418,11 +439,18 @@ def Export_data():
     cancel_button.grid(row=0, column=1, padx=(6, 0), sticky='ew')
 
 
+# Populate the treeview widget with normalized patient data.
 def _populate_table(rows):
     """Refresh treeview content and apply alternating row colors."""
     patient_table.delete(*patient_table.get_children())
     for index, row in enumerate(rows):
         row_values = list(row)
+        if len(row_values) > 1:
+            row_values[1] = _to_proper_case(row_values[1])
+        if len(row_values) > 4:
+            row_values[4] = _to_proper_case(row_values[4])
+        if len(row_values) > 7:
+            row_values[7] = _to_proper_case(row_values[7])
         if len(row_values) > 2:
             formatted_mobile = _normalize_mobile(row_values[2])
             if formatted_mobile:
@@ -431,6 +459,7 @@ def _populate_table(rows):
         patient_table.insert('', END, values=row_values, tags=(tag,))
 
 
+    # Retrieve patient rows honoring current filters and sort preferences.
 def _fetch_patients(filter_field=None, filter_term=None):
     global current_sort_field, current_sort_order
     sort_field = current_sort_field if current_sort_field in SORT_FIELD_OPTIONS.values() else 'patient_id'
@@ -461,7 +490,9 @@ def _fetch_patients(filter_field=None, filter_term=None):
     return mycursor.fetchall()
 
 
+# Allow mouse wheel scrolling for readonly comboboxes.
 def _bind_combobox_scroll(combobox, options):
+    # Adjust readonly combobox selection when user scrolls.
     def _on_mousewheel(event):
         if not options:
             return 'break'
@@ -480,6 +511,7 @@ def _bind_combobox_scroll(combobox, options):
     combobox.bind('<MouseWheel>', _on_mousewheel)
 
 
+# Present the update dialog for editing patient information.
 def Update_patient():
     selected_items = patient_table.selection()
     if not selected_items:
@@ -604,6 +636,7 @@ def Update_patient():
     diagnosisEntry = ctk.CTkEntry(form_container, font=('Segoe UI', 13))
     diagnosisEntry.grid(row=10, column=1, padx=(0, 24), pady=8, sticky='ew')
 
+    # Persist edits for the selected patient after validation.
     def Update_data():
         if bdayMonthEntry.get() in ('Month', '') or bdayDateEntry.get() in ('Day', '') or bdayYearEntry.get() in ('Year', ''):
             messagebox.showerror('Error', 'Please complete the birth date fields.', parent=update_window)
@@ -624,15 +657,18 @@ def Update_patient():
             messagebox.showerror('Error', 'Enter a valid mobile number.', parent=update_window)
             return
 
-        combined_address = f"{addressEntry.get()}, {barangayEntry.get()}, {municipalityEntry.get()}, {provinceEntry.get()}"
+        name_value = _to_proper_case(nameEntry.get())
+        address_parts = [addressEntry.get(), barangayEntry.get(), municipalityEntry.get(), provinceEntry.get()]
+        combined_address = ', '.join(_to_proper_case(part) for part in address_parts)
+        diagnosis_value = _to_proper_case(diagnosisEntry.get())
         combined_date = f"{bdayMonthEntry.get()}/{bdayDateEntry.get()}/{bdayYearEntry.get()}"
         query = (
             'update patient set name=%s, mobile=%s, email=%s, address=%s, gender=%s, dob=%s, diagnosis=%s, visit_date=%s '
             'where patient_id=%s'
         )
         mycursor.execute(query, (
-            nameEntry.get(), formatted_mobile, emaileEntry.get(), combined_address, genderVar.get(), combined_date,
-            diagnosisEntry.get(), date, patient_id
+            name_value, formatted_mobile, emaileEntry.get(), combined_address, genderVar.get(), combined_date,
+            diagnosis_value, date, patient_id
         ))
         con.commit()
         messagebox.showinfo('Success', f'Patient ID {patient_id} updated successfully!', parent=update_window)
@@ -690,6 +726,7 @@ def Update_patient():
         diagnosisEntry.insert(0, list_data[7])
 
 
+    # Refresh the table view using current filters and sort state.
 def Show_patient():
     filter_field = None
     filter_term = None
@@ -709,6 +746,7 @@ def Show_patient():
     _populate_table(fetched_data)
 
 
+# Highlight every patient row in the table for batch actions.
 def Select_all_patients():
     items = patient_table.get_children()
     if not items:
@@ -720,6 +758,7 @@ def Select_all_patients():
     patient_table.see(items[0])
 
 
+# Clear any current selection in the patient table widget.
 def Clear_selected_patients():
     selections = patient_table.selection()
     if not selections:
@@ -731,6 +770,7 @@ def Clear_selected_patients():
     patient_table.selection_remove(selections)
 
 
+# Let staff choose specific patient rows via a modal list.
 def Select_specific_patients():
     items = patient_table.get_children()
     if not items:
@@ -798,6 +838,7 @@ def Select_specific_patients():
     button_row.grid(row=2, column=0, padx=12, pady=(16, 4), sticky='ew')
     button_row.grid_columnconfigure((0, 1), weight=1)
 
+    # Write the chosen records back to the main tree selection.
     def _apply_selection():
         selections = listbox.curselection()
         if not selections:
@@ -818,6 +859,7 @@ def Select_specific_patients():
     cancel_button.grid(row=0, column=1, padx=(6, 0), sticky='ew')
 
 
+# Dispatch sidebar selection actions to the appropriate handler.
 def _on_selection_action(choice):
     if choice == SELECTION_MENU_OPTIONS[0]:
         return
@@ -833,6 +875,7 @@ def _on_selection_action(choice):
         selection_action_var.set(SELECTION_MENU_OPTIONS[0])
 
 
+# Remove selected patient records after confirmation.
 def Delete_patient():
     selections = patient_table.selection()
     if not selections:
@@ -878,6 +921,7 @@ def Delete_patient():
         messagebox.showinfo('Deleted', f'Deleted {len(patient_ids)} patients successfully.')
 
 
+# Display the analytics dashboard with charts and summaries.
 def Show_analytics_window():
     analytics = _compute_analytics()
 
@@ -1036,14 +1080,17 @@ def Show_patient_details(event=None):
     close_button.grid(row=len(detail_fields), column=0, columnspan=2, padx=24, pady=(12, 6), sticky='ew')
 
 
+# Debounce search entry changes and refresh the table.
 def _on_search_entry_change(event=None):
     Show_patient()
 
 
+# Update which column search queries target.
 def _on_search_field_change(choice):
     Show_patient()
 
 
+# Present sorting options so users can reorder patient rows.
 def open_sort_dialog():
     sort_window = ctk.CTkToplevel()
     sort_window.title('Sort Patients')
@@ -1080,6 +1127,7 @@ def open_sort_dialog():
     button_frame.grid(row=4, column=0, padx=12, pady=(6, 0), sticky='ew')
     button_frame.grid_columnconfigure((0, 1), weight=1)
 
+    # Apply the picked sort field and order, then refresh the table.
     def apply_sort():
         global current_sort_field, current_sort_order
         current_sort_field = SORT_FIELD_OPTIONS.get(field_var.get(), 'patient_id')
@@ -1096,6 +1144,7 @@ def open_sort_dialog():
     cancel_button.grid(row=0, column=1, padx=(6, 0), pady=4, sticky='ew')
 
 
+# Import patient information from spreadsheet or CSV sources.
 def Import_data():
     filepath = filedialog.askopenfilename(
         title='Import Patient Data',
@@ -1129,6 +1178,7 @@ def Import_data():
     normalized_to_original = {
         _normalize_column_name(col): col for col in data_frame.columns
     }
+# Open a modal showing detailed data for the double-clicked patient.
 
     required_columns = {
         'patient_id': 'patientid',
@@ -1155,6 +1205,7 @@ def Import_data():
         messagebox.showerror('Error', f'Missing required columns in file: {pretty_missing}')
         return
 
+    # Safely read a field from the current row with fallback handling.
     def get_value(row, field):
         value = row[resolved_columns[field]]
         if pandas.isna(value):
@@ -1215,6 +1266,10 @@ def Import_data():
                 error_samples.append(f'Row {excel_row}: Mobile number must follow +63 000 000 0000 format.')
             continue
 
+        name = _to_proper_case(name)
+        address_value = _to_proper_case(address_value)
+        diagnosis_value = _to_proper_case(diagnosis_value)
+
         try:
             query = (
                 'insert into patient ('
@@ -1248,10 +1303,15 @@ def Import_data():
 
     messagebox.showinfo('Import Complete', summary_message)
 
+
+# Show the add-patient form and handle new record submissions.
 def Add_patient():
+    # Validate the current form inputs before inserting a patient.
     def add_data():
+        # Detect whether the supplied string includes numeric characters.
         def contains_digits(string):
             return any(char.isdigit() for char in string)
+        # Detect whether the supplied string includes characters other than digits or dashes.
         def contains_non_digit(string):
             return any(not char.isdigit() and char != "-" for char in string)
 
@@ -1271,8 +1331,12 @@ def Add_patient():
         else:
             formatted_mobile = _normalize_mobile(mobile_input)
             if not formatted_mobile:
-                messagebox.showerror('Error', 'Mobile No. must follow the format +63 000 000 0000.', parent=add_window)
+                messagebox.showerror('Error', 'Mobile No. must follow the format +63 XXX XXX XXXX or 09XX XXX XXXX.', parent=add_window)
                 return
+            name_value = _to_proper_case(nameEntry.get())
+            address_parts = [addressEntry.get(), barangayEntry.get(), municipalityEntry.get(), provinceEntry.get()]
+            combined_address = ', '.join(_to_proper_case(part) for part in address_parts)
+            diagnosis_value = _to_proper_case(diagnosisEntry.get())
             try:
                 query = (
                     'insert into patient ('
@@ -1280,8 +1344,17 @@ def Add_patient():
                     ') values (%s,%s,%s,%s,%s,%s,%s,%s,%s)'
                 )
                 # combine address + barangay/city/province into single address field
-                combined_address = f"{addressEntry.get()}, {barangayEntry.get()}, {municipalityEntry.get()}, {provinceEntry.get()}"
-                mycursor.execute(query, (patientIdEntry.get(), nameEntry.get(), formatted_mobile, emaileEntry.get(), combined_address, genderVar.get(), dob_combined, diagnosisEntry.get(), date))
+                mycursor.execute(query, (
+                    patientIdEntry.get(),
+                    name_value,
+                    formatted_mobile,
+                    emaileEntry.get(),
+                    combined_address,
+                    genderVar.get(),
+                    dob_combined,
+                    diagnosis_value,
+                    date
+                ))
                 con.commit()
                 messagebox.showinfo('Success', f'Patient ID {patientIdEntry.get()} added successfully!', parent=add_window)
                 result = messagebox.askquestion('Confirm', 'Clear the form for another entry?', parent= add_window)
@@ -1405,6 +1478,8 @@ def Add_patient():
                                     hover_color=PRIMARY, corner_radius=14, font=('Segoe UI', 14, 'bold'))
     add_stud_button.grid(row=11, column=0, columnspan=2, padx=24, pady=(18, 10), sticky='ew')
 
+
+# Close the application gracefully after confirmation.
 def Exit():
     quit = messagebox.askquestion('Exit','Do you want to Exit')
     if quit == 'yes':
@@ -1433,9 +1508,9 @@ try:
 except:
     query = 'use clinicmanagementsystem'
     mycursor.execute(query)
-      
-        
-        
+
+
+# Keep the header clock label updated with current time.
 def clock():
     global date, current_time
     date = time.strftime('%m/%d/%Y')
@@ -1473,6 +1548,8 @@ right_Frame.place(relx=right_frame_relx, rely=0.0, relwidth=0.2, relheight=1.0)
 # allow centering/widgets to expand horizontally inside the sidebar
 right_Frame.grid_columnconfigure(0, weight=1)
 
+
+# Load the sidebar logo image with graceful fallbacks.
 def _load_sidebar_logo(filenames=("logo.png",), size=(140, 140)):
     from PIL import ImageDraw
     for fname in filenames:

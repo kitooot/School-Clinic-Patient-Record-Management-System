@@ -1,1 +1,1 @@
-{'username': 'password', 'kit': 'kit', 'bench': 'benchlulu', 'mhartin': 'mhartin', 'johan': 'johan', 'tambuli': 'kit', 'ashl eye': 'asli'}
+{'kit': 'kit'}

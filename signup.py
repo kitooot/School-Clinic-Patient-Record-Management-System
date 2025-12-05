@@ -1,11 +1,11 @@
-from tkinter import *
-from tkinter import messagebox
-import ast
-import os
-import customtkinter as ctk
-from PIL import Image
+from tkinter import * # Import all necessary tkinter components
+from tkinter import messagebox # For displaying message boxes
+import ast # For safely evaluating string representations of Python data structures
+import os # For file path operations
+import customtkinter as ctk # Custom Tkinter for enhanced UI components
+from PIL import Image # For image handling
 
-from modules.config import PRIMARY, SECONDARY, BG, ACCENT, TEXT, CARD_BG
+from config import PRIMARY, SECONDARY, BG, ACCENT, TEXT, CARD_BG # Import color constants from config
 
 window = ctk.CTk()
 window.title("School Clinic - Staff Registration")
@@ -16,13 +16,14 @@ window.configure(bg= BG)
 window.resizable(False, False)
 
 
-
+# Helper function to load icons with error handling
 def _load_icon(path, size=(20, 20)):
     try:
         return ctk.CTkImage(Image.open(path), size=size)
     except Exception:
         return None
 
+# Function to handle sign-up logic
 def sign_up():
     username = username_entry.get().strip()
     passwrd = password_entry.get()
@@ -60,10 +61,12 @@ def sign_up():
     except Exception as e:
         messagebox.showerror('Error', f"An error occurred: {e}")
 
+# Function to switch to sign-in window
 def signin():
     window.destroy()
     import loginn
 
+# Function to toggle password visibility
 def toggle_password():
     if show_password.get():
         password_entry.configure(show='*')
@@ -84,7 +87,7 @@ show_password = BooleanVar(value=False)
 hide_icon = _load_icon('hidden.png')
 show_icon = _load_icon('eye.png')
 
-
+# Function to load logo image with fallback
 def _load_logo(filenames=("logoo.png", "logo.png"), size=(140, 140)):
     for fname in filenames:
         if os.path.exists(fname):
