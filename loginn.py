@@ -7,6 +7,40 @@ from PIL import Image  # For image handling
 
 from config import PRIMARY, SECONDARY, BG, ACCENT, TEXT, CARD_BG # Import color constants from config
 
+
+_next_action = None  # Track which window to launch after login UI closes
+
+# Helper function to show launch error messages
+def _show_launch_error(exc: Exception) -> None:
+    fallback = Tk()
+    fallback.withdraw()
+    messagebox.showerror('Error', f'Failed to start system: {exc}\n\nCheck the terminal for full traceback.')
+    fallback.destroy()
+
+# Function to perform the scheduled transition
+def _perform_transition() -> None:
+    global _next_action
+    target = _next_action
+    if target is None:
+        return
+
+    _next_action = None
+    root.destroy()
+
+    if target == 'system':
+        try:
+            import system  # pylint: disable=import-outside-toplevel,unused-import
+        except Exception as exc:  # pylint: disable=broad-except
+            _show_launch_error(exc)
+    elif target == 'signup':
+        import signup  # pylint: disable=import-outside-toplevel,unused-import
+
+# Function to schedule the transition to another window
+def _schedule_transition(target: str) -> None:
+    global _next_action
+    _next_action = target
+    root.after(10, _perform_transition)
+
 # Initialize main window
 root = ctk.CTk()
 root.title('School Clinic - Staff Login')
@@ -51,19 +85,13 @@ def sign_in():
 
     if username in r and passwrd == r[username]:
         messagebox.showinfo('Login', 'Login successful — welcome')
-        root.destroy()
-        try:
-            import system
-        except Exception as e:
-            
-            messagebox.showerror('Error', f'Failed to start system: {e}\n\nCheck the terminal for full traceback.')
+        _schedule_transition('system')
     else:
         messagebox.showerror('Invalid', 'Invalid staff username or password')
 
 # Function to switch to sign-up window
 def signup():
-    root.destroy()
-    import signup
+    _schedule_transition('signup')
 
 # Function to toggle password visibility
 def toggle_password():

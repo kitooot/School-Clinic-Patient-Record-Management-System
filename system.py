@@ -1,18 +1,14 @@
-from tkinter import * # Main GUI library
-import time # Time-related functions
-import os # Operating system interfaces
-from tkinter import ttk, messagebox, filedialog # GUI widgets and dialogs
-import pymysql # MySQL database connector
-from pymysql.err import IntegrityError # Specific database error
-import pandas # Data manipulation library
-import customtkinter as ctk # Custom themed tkinter
-from PIL import ImageTk, Image # Image handling
-from collections import Counter # Counting hashable objects
-from datetime import datetime # Date and time manipulation
-import tempfile # Temporary file management
-import importlib # Dynamic module importing
+from tkinter import *  # Main GUI library
+import time  # Time-related functions
+import os  # Operating system interfaces
+from tkinter import ttk, messagebox, filedialog  # GUI widgets and dialogs
+from pymysql.err import IntegrityError  # Specific database error
+import pandas  # Data manipulation library
+import customtkinter as ctk  # Custom themed tkinter
+from PIL import ImageTk, Image  # Image handling
+import importlib  # Dynamic module importing
 
-from config import ( # Database and UI configuration
+from config import (  # Database and UI configuration
     PRIMARY,
     SECONDARY,
     BG,
@@ -30,11 +26,19 @@ from config import ( # Database and UI configuration
     SELECTION_MENU_OPTIONS,
 )
 
+from analytics_service import compute_analytics, create_analytics_figures, load_all_patients #  Importing analytics functions
+from database import db_connection, db_cursor # Database connection and cursor
+from export_service import export_patient_analytics_pdf, export_patient_records_excel # Export functions
+from helpers import normalize_column_name, normalize_mobile, to_proper_case # Helper functions
+from import_service import import_patient_dataframe # Import function
+
+# Initialize database connection and cursor
 try:
     FPDF = importlib.import_module('fpdf').FPDF
 except (ImportError, AttributeError):
     FPDF = None
 
+# Attempt to import matplotlib for plotting
 try:
     matplotlib = importlib.import_module('matplotlib')
     matplotlib.use('TkAgg')
@@ -45,296 +49,37 @@ except Exception:
     FigureCanvasTkAgg = None
     matplotlib = None
 
+# Check for openpyxl for Excel export
 try:
     importlib.import_module('openpyxl')
     HAS_OPENPYXL = True
 except ImportError:
     HAS_OPENPYXL = False
 
+
+# Initialize sorting and search variables
 current_sort_field = 'patient_id'
 current_sort_order = 'ASC'
 search_field_var = None
 search_entry = None
 selection_action_var = None
-    
-# Format a raw phone number into the standardized +63 grouping.
-def _normalize_mobile(number: str):
-    if not number:
-        return None
-    digits = ''.join(ch for ch in str(number) if ch.isdigit())
-    if digits.startswith('0') and len(digits) == 11:
-        digits = '63' + digits[1:]
-    elif digits.startswith('63') and len(digits) == 12:
-        pass
-    else:
-        return None
-    if len(digits) != 12 or not digits.startswith('63'):
-        return None
-    return f"+63 {digits[2:5]} {digits[5:8]} {digits[8:12]}"
 
+_normalize_mobile = normalize_mobile
+_normalize_column_name = normalize_column_name
+_to_proper_case = to_proper_case
 
-# Normalize CSV column headers to a consistent lowercase identifier.
-def _normalize_column_name(column_name: str) -> str:
-    return ''.join(ch for ch in str(column_name).lower() if ch.isalnum())
-
-
-# Convert arbitrary text into proper-case format for presentation.
-def _to_proper_case(value: str) -> str:
-    if not value:
-        return ''
-    return str(value).strip().title()
-
-
-# Fetch every patient record from the database for downstream features.
+# Load all patients from the database.
 def _load_all_patients():
-    mycursor.execute(
-        'select patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date from patient'
-    )
-    return mycursor.fetchall()
+    return load_all_patients(db_cursor)
 
-
-# Build aggregate metrics used by the analytics views and exports.
+# Compute analytics data from patient records.
 def _compute_analytics():
     rows = _load_all_patients()
-    total = len(rows)
+    return compute_analytics(rows)
 
-    gender_counts = Counter()
-    municipality_counts = Counter()
-    diagnosis_counts = Counter()
-    month_counts = Counter()
-    month_labels = {}
-    latest_visit_dt = None
-
-    for row in rows:
-        gender_value = _to_proper_case(row[5])
-        gender = gender_value or 'Unspecified'
-        gender_counts[gender] += 1
-
-        address = row[4] or ''
-        parts = []
-        for part in address.split(','):
-            cleaned = _to_proper_case(part)
-            if cleaned:
-                parts.append(cleaned)
-        municipality = parts[2] if len(parts) >= 3 else 'Unspecified'
-        municipality_counts[municipality] += 1
-
-        diagnosis_value = _to_proper_case(row[7])
-        diagnosis = diagnosis_value or 'Unspecified'
-        diagnosis_counts[diagnosis] += 1
-
-        visit_date = row[8]
-        if visit_date:
-            try:
-                visit_dt = datetime.strptime(visit_date, '%m/%d/%Y')
-            except ValueError:
-                continue
-            key = visit_dt.strftime('%Y-%m')
-            month_counts[key] += 1
-            month_labels[key] = visit_dt.strftime('%B %Y')
-            if latest_visit_dt is None or visit_dt > latest_visit_dt:
-                latest_visit_dt = visit_dt
-
-    visits_by_month = [(month_labels[key], month_counts[key]) for key in sorted(month_counts.keys())]
-
-    analytics = {
-        'total': total,
-        'genders': gender_counts.most_common(),
-        'municipalities': municipality_counts.most_common(10),
-        'diagnoses': diagnosis_counts.most_common(10),
-        'visits_by_month': visits_by_month,
-        'latest_visit': latest_visit_dt.strftime('%B %d, %Y') if latest_visit_dt else 'N/A'
-    }
-    return analytics
-
-
-# Render matplotlib figures backing the analytics charts.
+# Create analytics figures for PDF export.
 def _create_analytics_figures(analytics):
-    if Figure is None:
-        return {}
-
-    figures = {}
-
-    gender_data = analytics.get('genders') or []
-    if gender_data:
-        labels = [label for label, _ in gender_data]
-        counts = [count for _, count in gender_data]
-        fig = Figure(figsize=(4.2, 3.2), dpi=100)
-        ax = fig.add_subplot(111)
-
-        # Show percentage labels only when a slice has a value.
-        def _autopct(pct):
-            return f'{pct:.1f}%' if pct > 0 else ''
-
-        ax.pie(counts, labels=labels, autopct=_autopct, startangle=90)
-        ax.axis('equal')
-        ax.set_title('Gender Distribution', fontsize=12)
-        fig.tight_layout()
-        figures['gender'] = fig
-
-    diagnosis_data = analytics.get('diagnoses') or []
-    top_diagnoses = diagnosis_data[:5]
-    if top_diagnoses:
-        labels = [label for label, _ in top_diagnoses]
-        counts = [count for _, count in top_diagnoses]
-        fig = Figure(figsize=(4.6, 3.2), dpi=100)
-        ax = fig.add_subplot(111)
-        positions = list(range(len(labels)))
-        bars = ax.bar(positions, counts, color=PRIMARY)
-        ax.set_title('Top Diagnoses', fontsize=12)
-        ax.set_ylabel('Patients')
-        ax.set_xticks(positions)
-        ax.set_xticklabels(labels, rotation=30, ha='right')
-        if counts:
-            ax.set_ylim(0, max(counts) + 1)
-        try:
-            ax.bar_label(bars, padding=3, fontsize=9)
-        except Exception:
-            for rect, value in zip(bars, counts):
-                ax.text(rect.get_x() + rect.get_width() / 2, rect.get_height() + 0.1, str(value),
-                        ha='center', va='bottom', fontsize=9)
-        ax.grid(axis='y', linestyle='--', alpha=0.2)
-        fig.tight_layout()
-        figures['diagnosis'] = fig
-
-    visits_data = analytics.get('visits_by_month') or []
-    recent_visits = visits_data[-12:]
-    if recent_visits:
-        labels = [label for label, _ in recent_visits]
-        counts = [count for _, count in recent_visits]
-        positions = list(range(len(labels)))
-        fig = Figure(figsize=(6.0, 3.2), dpi=100)
-        ax = fig.add_subplot(111)
-        ax.plot(positions, counts, marker='o', color=SECONDARY, linewidth=2)
-        ax.set_title('Clinic Visits by Month', fontsize=12)
-        ax.set_ylabel('Patients Seen')
-        ax.set_xticks(positions)
-        ax.set_xticklabels(labels, rotation=35, ha='right')
-        ax.grid(True, linestyle='--', alpha=0.3)
-        fig.tight_layout()
-        figures['visits'] = fig
-
-    municipality_data = analytics.get('municipalities') or []
-    top_municipalities = municipality_data[:5]
-    if top_municipalities:
-        labels = [label for label, _ in top_municipalities]
-        counts = [count for _, count in top_municipalities]
-        fig = Figure(figsize=(4.6, 3.2), dpi=100)
-        ax = fig.add_subplot(111)
-        positions = list(range(len(labels)))
-        bars = ax.barh(positions, counts, color=PRIMARY)
-        ax.set_title('Top Municipalities', fontsize=12)
-        ax.set_xlabel('Patients')
-        ax.set_yticks(positions)
-        ax.set_yticklabels(labels)
-        if counts:
-            ax.set_xlim(0, max(counts) + 1)
-        try:
-            ax.bar_label(bars, padding=3, fontsize=9)
-        except Exception:
-            for rect, value in zip(bars, counts):
-                ax.text(rect.get_width() + 0.1, rect.get_y() + rect.get_height() / 2, str(value),
-                        va='center', fontsize=9)
-        ax.grid(axis='x', linestyle='--', alpha=0.2)
-        fig.tight_layout()
-        figures['municipality'] = fig
-
-    return figures
-
-
-# Save patient data to an Excel workbook for offline use.
-def _export_patient_records_excel(file_path: str):
-    rows = _load_all_patients()
-    if not rows:
-        raise ValueError('There are no patient records to export.')
-
-    headers = ['Patient ID', 'Name', 'Mobile No.', 'Email', 'Address', 'Gender', 'Date of Birth', 'Diagnosis', 'Visit Date']
-    formatted_rows = []
-    for row in rows:
-        formatted_rows.append([
-            str(row[0] or ''),
-            str(row[1] or ''),
-            _normalize_mobile(row[2]) or str(row[2] or ''),
-            str(row[3] or ''),
-            str(row[4] or ''),
-            str(row[5] or ''),
-            str(row[6] or ''),
-            str(row[7] or ''),
-            str(row[8] or '')
-        ])
-
-    table = pandas.DataFrame(formatted_rows, columns=headers)
-    table.to_excel(file_path, index=False)
-
-# Generate a PDF report summarizing patient analytics and charts.
-def _export_patient_analytics_pdf(file_path: str):
-    analytics = _compute_analytics()
-
-    pdf = FPDF(unit='mm', format='A4')
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-
-    pdf.set_font('Arial', 'B', 16)
-    pdf.cell(0, 10, 'Patient Analytics', 0, 1, 'C')
-    pdf.set_font('Arial', '', 10)
-    pdf.cell(0, 8, f'Generated on {datetime.now().strftime("%B %d, %Y %I:%M %p")}', 0, 1, 'C')
-    pdf.ln(4)
-
-    if analytics['total'] == 0:
-        pdf.set_font('Arial', '', 12)
-        pdf.cell(0, 8, 'No patient records available for analytics.', 0, 1, 'C')
-        pdf.output(file_path)
-        return
-
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(0, 8, f"Total Patients: {analytics['total']}", 0, 1)
-    pdf.set_font('Arial', '', 11)
-    pdf.cell(0, 6, f"Most Recent Visit: {analytics['latest_visit']}", 0, 1)
-    pdf.ln(3)
-
-    figures = _create_analytics_figures(analytics)
-    chart_titles = {
-        'gender': 'Gender Distribution',
-        'diagnosis': 'Top Diagnoses',
-        'municipality': 'Top Municipalities',
-        'visits': 'Clinic Visits by Month'
-    }
-
-    temp_files = []
-    try:
-        for key in ('gender', 'diagnosis', 'municipality', 'visits'):
-            fig = figures.get(key)
-            title = chart_titles.get(key, key.title())
-
-            if fig is None:
-                pdf.add_page()
-                pdf.set_font('Arial', 'B', 14)
-                pdf.cell(0, 10, title, 0, 1, 'C')
-                pdf.set_font('Arial', '', 11)
-                pdf.ln(4)
-                pdf.multi_cell(0, 7, 'No data available for this chart.')
-                continue
-
-            tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-            temp_files.append(tmp_file.name)
-            fig.savefig(tmp_file.name, dpi=180, bbox_inches='tight')
-            tmp_file.close()
-
-            pdf.add_page()
-            pdf.set_font('Arial', 'B', 14)
-            pdf.cell(0, 10, title, 0, 1, 'C')
-            pdf.ln(4)
-
-            max_width = pdf.w - 20
-            pdf.image(tmp_file.name, x=10, w=max_width)
-
-        pdf.output(file_path)
-    finally:
-        for path in temp_files:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+    return create_analytics_figures(analytics, Figure, PRIMARY, SECONDARY)
 
 
 # Present export options for staff to download records or analytics.
@@ -391,7 +136,7 @@ def Export_data():
             if not file_path:
                 return
             try:
-                _export_patient_records_excel(file_path)
+                export_patient_records_excel(db_cursor, file_path)
             except ValueError as exc:
                 messagebox.showinfo('Export', str(exc))
             except Exception as exc:
@@ -418,7 +163,7 @@ def Export_data():
             if not file_path:
                 return
             try:
-                _export_patient_analytics_pdf(file_path)
+                export_patient_analytics_pdf(db_cursor, file_path, FPDF, Figure, PRIMARY, SECONDARY)
             except ValueError as exc:
                 messagebox.showinfo('Export', str(exc))
             except Exception as exc:
@@ -535,6 +280,7 @@ def Update_patient():
 
     patient_id = str(list_data[0])
 
+    # Fetch existing patient data from the database.
     try:
         mycursor.execute(
             'select patient_id, name, mobile, email, address, gender, dob, diagnosis, visit_date '
@@ -939,14 +685,39 @@ def Show_analytics_window():
     analytics_window = ctk.CTkToplevel()
     analytics_window.title('Patient Analytics')
     analytics_window.grab_set()
-    analytics_window.resizable(False, False)
     analytics_window.configure(fg_color=ACCENT)
     analytics_window.transient(root)
+    analytics_window.resizable(True, True)
+    analytics_window.grid_rowconfigure(0, weight=1)
+    analytics_window.grid_columnconfigure(0, weight=1)
+
+    screen_w = analytics_window.winfo_screenwidth()
+    screen_h = analytics_window.winfo_screenheight()
+    min_width = min(960, screen_w)
+    min_height = min(700, screen_h)
+    win_w = min(max(int(screen_w * 0.75), min_width), screen_w)
+    win_h = min(max(int(screen_h * 0.75), min_height), screen_h)
+    pos_x = max((screen_w - win_w) // 2, 0)
+    pos_y = max((screen_h - win_h) // 2, 0)
+    analytics_window.geometry(f'{win_w}x{win_h}+{pos_x}+{pos_y}')
+    analytics_window.minsize(min_width, min_height)
 
     container = ctk.CTkFrame(analytics_window, fg_color=CARD_BG, corner_radius=18)
     container.grid(row=0, column=0, padx=26, pady=24, sticky='nsew')
     container.grid_columnconfigure(0, weight=1)
     container.grid_rowconfigure(2, weight=1)
+
+    def _make_canvas_responsive(target_frame, fig, canvas):
+        """Resize matplotlib canvases when their parent frames change size."""
+
+        def _on_resize(event):
+            if event.width <= 1 or event.height <= 1:
+                return
+            dpi = fig.dpi or 100
+            fig.set_size_inches(max(event.width / dpi, 1), max(event.height / dpi, 1))
+            canvas.draw_idle()
+
+        target_frame.bind('<Configure>', _on_resize)
 
     ctk.CTkLabel(container, text='Patient Analytics Overview', font=('Segoe UI', 18, 'bold'), text_color=TEXT).grid(
         row=0, column=0, padx=18, pady=(10, 6), sticky='ew'
@@ -1006,6 +777,7 @@ def Show_analytics_window():
         canvas.draw()
         canvas.get_tk_widget().pack(fill=BOTH, expand=True)
         chart_canvases.append(canvas)
+        _make_canvas_responsive(frame, fig, canvas)
 
     analytics_window._chart_canvases = chart_canvases  # keep references
 
@@ -1015,7 +787,7 @@ def Show_analytics_window():
     )
     close_button.grid(row=3, column=0, padx=18, pady=(6, 4), sticky='ew')
 
-
+# Show detailed information for the selected patient.
 def Show_patient_details(event=None):
     selection = patient_table.focus()
     if not selection:
@@ -1487,27 +1259,8 @@ def Exit():
     else:
         pass
 
-
-con = pymysql.connect(host='localhost', user='root', password='')
-mycursor = con.cursor()
-
-try:
-    query = 'create database clinicmanagementsystem'
-    mycursor.execute(query)
-    query = 'use clinicmanagementsystem'
-    mycursor.execute(query)
-    query = (
-        'create table patient('
-        'patient_id varchar(30) primary key, '
-        'name varchar(30), mobile varchar(30), email varchar(30), '
-        'address varchar(100), gender varchar(30), dob varchar(30), '
-        'diagnosis varchar(30), visit_date varchar(30)'
-        ')'
-    )
-    mycursor.execute(query)
-except:
-    query = 'use clinicmanagementsystem'
-    mycursor.execute(query)
+con = db_connection
+mycursor = db_cursor
 
 
 # Keep the header clock label updated with current time.
@@ -1521,32 +1274,77 @@ def clock():
 # **********GUI***************
 root = ctk.CTk()
 ctk.set_appearance_mode('light')
-root.geometry('1200x730+0+0')
 root.title('School Clinic Patient Record Management System')
-root.resizable(False, False)
-
 root.configure(bg=BG)
 
-DateTimeLabel = ctk.CTkLabel(root, font=('Segoe UI', 12, 'bold'), text_color='white', fg_color=SECONDARY, corner_radius=12, padx=14, pady=6)
+# Establish a responsive base size that scales with the display.
+root.update_idletasks()
+screen_w = root.winfo_screenwidth()
+screen_h = root.winfo_screenheight()
+min_width = min(1024, screen_w)
+min_height = min(700, screen_h)
+initial_w = min(max(int(screen_w * 0.85), min_width), screen_w)
+initial_h = min(max(int(screen_h * 0.8), min_height), screen_h)
+offset_x = max((screen_w - initial_w) // 2, 0)
+offset_y = max((screen_h - initial_h) // 2, 0)
+root.geometry(f'{initial_w}x{initial_h}+{offset_x}+{offset_y}')
+root.minsize(min_width, min_height)
+root.resizable(True, True)
+root.grid_rowconfigure(1, weight=1)
+root.grid_columnconfigure(0, weight=1)
 
-DateTimeLabel.place(relx=0.985, rely=0.07, anchor='se')
-clock()
+top_frame = ctk.CTkFrame(root, fg_color='transparent')
+top_frame.grid(row=0, column=0, sticky='ew', padx=24, pady=(18, 12))
+top_frame.grid_columnconfigure(0, weight=1)
 
 stud = 'School Clinic Patient Record Management System'
-sliderLabel = ctk.CTkLabel(root, text=stud, font=('Segoe UI', 26, 'bold'), text_color='white', fg_color=HEADER_BG, corner_radius=18, height=60)
-sliderLabel.place(relx=0.5, rely=0.08, anchor='n', relwidth=0.9)
+sliderLabel = ctk.CTkLabel(
+    top_frame,
+    text=stud,
+    font=('Segoe UI', 26, 'bold'),
+    text_color='white',
+    fg_color=HEADER_BG,
+    corner_radius=18,
+    height=60
+)
+sliderLabel.grid(row=0, column=0, sticky='ew')
 
-# Place sidebar using relative coordinates so it scales with the window
-# Right sidebar occupies roughly 22% of the width on the right
-right_Frame = ctk.CTkFrame(root, fg_color=SIDEBAR_BG, corner_radius=20)
-if SIDEBAR_SIDE == 'right':
-    right_frame_relx = 0.78
+DateTimeLabel = ctk.CTkLabel(
+    top_frame,
+    font=('Segoe UI', 12, 'bold'),
+    text_color='white',
+    fg_color=SECONDARY,
+    corner_radius=12,
+    padx=14,
+    pady=6
+)
+DateTimeLabel.grid(row=0, column=1, padx=(12, 0), sticky='e')
+clock()
+
+body_frame = ctk.CTkFrame(root, fg_color='transparent')
+body_frame.grid(row=1, column=0, sticky='nsew', padx=24, pady=(0, 24))
+body_frame.grid_rowconfigure(0, weight=1)
+
+if SIDEBAR_SIDE == 'left':
+    sidebar_col, content_col = 0, 1
+    sidebar_pad = (0, 18)
+    content_pad = (18, 0)
 else:
-    right_frame_relx = 0.02
-# compute left area placement so main content doesn't overlap the sidebar
-right_Frame.place(relx=right_frame_relx, rely=0.0, relwidth=0.2, relheight=1.0)
-# allow centering/widgets to expand horizontally inside the sidebar
+    sidebar_col, content_col = 1, 0
+    sidebar_pad = (18, 0)
+    content_pad = (0, 18)
+
+body_frame.grid_columnconfigure(content_col, weight=1)
+body_frame.grid_columnconfigure(sidebar_col, weight=0, minsize=260)
+
+right_Frame = ctk.CTkFrame(body_frame, fg_color=SIDEBAR_BG, corner_radius=20)
+right_Frame.grid(row=0, column=sidebar_col, sticky='nsew', padx=sidebar_pad)
 right_Frame.grid_columnconfigure(0, weight=1)
+
+left_frame = ctk.CTkFrame(body_frame, fg_color=ACCENT, corner_radius=24)
+left_frame.grid(row=0, column=content_col, sticky='nsew', padx=content_pad)
+left_frame.grid_columnconfigure(0, weight=1)
+left_frame.grid_rowconfigure(1, weight=1)
 
 
 # Load the sidebar logo image with graceful fallbacks.
@@ -1617,25 +1415,6 @@ analytics_button.grid(row=6, column=0, pady=8, padx=10, sticky='ew')
 
 exit_button = ctk.CTkButton(right_Frame, text='Exit', command=Exit, fg_color='#e74c3c', hover_color='#c0392b', text_color='white', font=('Segoe UI', 14, 'bold'), corner_radius=14, height=44)
 exit_button.grid(row=7, column=0, pady=12, padx=10, sticky='ew')
-
-left_frame = ctk.CTkFrame(root, fg_color=ACCENT, corner_radius=24)
-# Compute left_frame position depending on which side the sidebar is on
-if SIDEBAR_SIDE == 'right':
-    left_relx = 0.03
-    left_relwidth = 0.7
-else:
-    left_relx = 0.26
-    left_relwidth = 0.7
-
-left_frame.place(relx=left_relx, rely=0.18, relwidth=left_relwidth, relheight=0.80)
-
-if SIDEBAR_SIDE == 'left':
-    sliderLabel.place_configure(relx=left_relx + (left_relwidth / 2), relwidth=left_relwidth * 0.96)
-else:
-    sliderLabel.place_configure(relx=0.5, relwidth=0.9)
-
-left_frame.grid_columnconfigure(0, weight=1)
-left_frame.grid_rowconfigure(1, weight=1)
 
 header_frame = ctk.CTkFrame(left_frame, fg_color='transparent')
 header_frame.grid(row=0, column=0, sticky='ew', padx=28, pady=(24, 12))

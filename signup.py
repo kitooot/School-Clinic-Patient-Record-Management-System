@@ -7,6 +7,7 @@ from PIL import Image # For image handling
 
 from config import PRIMARY, SECONDARY, BG, ACCENT, TEXT, CARD_BG # Import color constants from config
 
+# Initialize main window
 window = ctk.CTk()
 window.title("School Clinic - Staff Registration")
 window.geometry('550x650+300+200')
