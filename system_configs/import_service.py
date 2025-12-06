@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple
 import pandas
 from pymysql.err import IntegrityError
 
-from helpers import normalize_column_name, normalize_mobile, to_proper_case
+from .helpers import normalize_column_name, normalize_mobile, to_proper_case
 
 REQUIRED_COLUMNS = {
     'patient_id': 'patientid',

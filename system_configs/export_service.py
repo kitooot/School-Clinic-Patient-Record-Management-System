@@ -8,8 +8,8 @@ from typing import List # For type hinting
 
 import pandas # For data manipulation and Excel export
 
-from analytics_service import compute_analytics, create_analytics_figures, load_all_patients #  Importing analytics functions
-from helpers import normalize_mobile # Importing helper function for mobile number normalization
+from .analytics_service import compute_analytics, create_analytics_figures, load_all_patients #  Importing analytics functions
+from .helpers import normalize_mobile # Importing helper function for mobile number normalization
 
 # Export all patient records to an Excel file.
 def export_patient_records_excel(cursor, file_path: str) -> None:

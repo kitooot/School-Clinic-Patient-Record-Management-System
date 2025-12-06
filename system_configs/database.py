@@ -23,6 +23,12 @@ def ensure_schema(cursor: pymysql.cursors.Cursor, connection: pymysql.connection
         'diagnosis varchar(30), visit_date varchar(30)'
         ')'
     )
+    cursor.execute(
+        'create table if not exists users ('
+        'username varchar(50) primary key, '
+        'password varchar(255) not null'
+        ')'
+    )
     connection.commit()
 
 

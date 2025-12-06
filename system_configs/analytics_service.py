@@ -5,7 +5,7 @@ from collections import Counter # For counting hashable objects
 from datetime import datetime # For handling date and time
 from typing import Dict, Iterable, List, Tuple, Optional # For type hinting
 
-from helpers import to_proper_case # Importing helper function for proper case conversion
+from .helpers import to_proper_case # Importing helper function for proper case conversion
 
 PatientRow = Tuple[str, str, str, str, str, str, str, str, str] # Define a type alias for patient record rows
 AnalyticsData = Dict[str, object] # Define a type alias for analytics data dictionary

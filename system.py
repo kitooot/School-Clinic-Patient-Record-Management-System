@@ -8,7 +8,7 @@ import customtkinter as ctk  # Custom themed tkinter
 from PIL import ImageTk, Image  # Image handling
 import importlib  # Dynamic module importing
 
-from config import (  # Database and UI configuration
+from system_configs.config import (  # Database and UI configuration
     PRIMARY,
     SECONDARY,
     BG,
@@ -26,11 +26,11 @@ from config import (  # Database and UI configuration
     SELECTION_MENU_OPTIONS,
 )
 
-from analytics_service import compute_analytics, create_analytics_figures, load_all_patients #  Importing analytics functions
-from database import db_connection, db_cursor # Database connection and cursor
-from export_service import export_patient_analytics_pdf, export_patient_records_excel # Export functions
-from helpers import normalize_column_name, normalize_mobile, to_proper_case # Helper functions
-from import_service import import_patient_dataframe # Import function
+from system_configs.analytics_service import compute_analytics, create_analytics_figures, load_all_patients #  Importing analytics functions
+from system_configs.database import db_connection, db_cursor # Database connection and cursor
+from system_configs.export_service import export_patient_analytics_pdf, export_patient_records_excel # Export functions
+from system_configs.helpers import normalize_column_name, normalize_mobile, to_proper_case # Helper functions
+from system_configs.import_service import import_patient_dataframe # Import function
 
 # Initialize database connection and cursor
 try:
@@ -1347,41 +1347,36 @@ left_frame.grid_columnconfigure(0, weight=1)
 left_frame.grid_rowconfigure(1, weight=1)
 
 
-# Load the sidebar logo image with graceful fallbacks.
-def _load_sidebar_logo(filenames=("logo.png",), size=(140, 140)):
-    from PIL import ImageDraw
-    for fname in filenames:
-        if os.path.exists(fname):
-            try:
-                img = Image.open(fname).convert('RGBA')
-                img.thumbnail(size, Image.LANCZOS)
-                # Create rounded mask
-                mask = Image.new('L', size, 0)
-                draw = ImageDraw.Draw(mask)
-                draw.rounded_rectangle((0, 0, size[0], size[1]), radius=35, fill=255)
-                # Apply mask to create rounded image
-                rounded_img = Image.new('RGBA', size, (0, 0, 0, 0))
-                x = (size[0] - img.width) // 2
-                y = (size[1] - img.height) // 2
-                rounded_img.paste(img, (x, y))
-                rounded_img.putalpha(mask)
-                # Create background
-                bg_img = Image.new('RGBA', size, SIDEBAR_BG)
-                bg_img.paste(rounded_img, (0, 0), rounded_img)
-                return ImageTk.PhotoImage(bg_img)
-            except Exception:
-                continue
-    # Fallback: plainly colored background that matches the sidebar
+# Load the sidebar logo image with enhanced nested frame design
+def _load_sidebar_logo(filenames=("images/logo.png",), size=(120, 120)):
     try:
-        fallback = Image.new('RGBA', size, SIDEBAR_BG)
-        return ImageTk.PhotoImage(fallback)
+        for fname in filenames:
+            if os.path.exists(fname):
+                img_pil = Image.open(fname)
+                img_pil.thumbnail(size, Image.LANCZOS)
+                return ImageTk.PhotoImage(img_pil)
+    except Exception:
+        pass
+    # Fallback: create placeholder
+    try:
+        from PIL import Image as PILImage
+        placeholder = PILImage.new('RGBA', size, ACCENT)
+        return ImageTk.PhotoImage(placeholder)
     except Exception:
         return None
 
+# Enhanced logo with nested frame design matching login
+logo_outer = ctk.CTkFrame(right_Frame, fg_color=ACCENT, corner_radius=70, width=140, height=140, border_width=3, border_color=PRIMARY)
+logo_outer.grid(row=0, column=0, pady=16, padx=0)
+logo_outer.grid_propagate(False)
+
+logo_inner = ctk.CTkFrame(logo_outer, fg_color='white', corner_radius=60, width=120, height=120)
+logo_inner.place(relx=0.5, rely=0.5, anchor='center')
+
 logo_image = _load_sidebar_logo()
-logo_Label = Label(right_Frame, image=logo_image, bg=SIDEBAR_BG)
+logo_Label = Label(logo_inner, image=logo_image, bg='white', bd=0)
 logo_Label.image = logo_image  # keep a reference to avoid garbage collection
-logo_Label.grid(row=0, column=0, pady=12, padx=0, sticky='n')
+logo_Label.place(relx=0.5, rely=0.5, anchor='center')
 
 # Standardized sidebar buttons: stretch to available width and consistent spacing
 button_kwargs = dict(
