@@ -1,5 +1,6 @@
 from tkinter import * # Import all necessary tkinter components
 from tkinter import messagebox # For displaying message boxes
+from pathlib import Path # For file path operations
 import customtkinter as ctk # Custom Tkinter for enhanced UI components
 from PIL import Image  # For image handling
 
@@ -8,6 +9,8 @@ from system_configs.database import db_connection, db_cursor # Import database c
 
 
 _next_action = None  # Track which window to launch after login UI closes
+BASE_DIR = Path(__file__).resolve().parent
+IMAGES_DIR = BASE_DIR / "images"
 
 # Helper function to show launch error messages
 def _show_launch_error(exc: Exception) -> None:
@@ -28,7 +31,8 @@ def _perform_transition() -> None:
 
     if target == 'system':
         try:
-            import system  # pylint: disable=import-outside-toplevel,unused-import
+            import system  # pylint: disable=import-outside-toplevel
+            system.main()
         except Exception as exc:  # pylint: disable=broad-except
             _show_launch_error(exc)
     elif target == 'signup':
@@ -63,8 +67,9 @@ PASS_PH = 'Enter password'
 
 # Helper function to load icons with error handling
 def _load_icon(path, size=(20, 20)):
+    image_path = IMAGES_DIR / path
     try:
-        return ctk.CTkImage(Image.open(f'images/{path}'), size=size)
+        return ctk.CTkImage(Image.open(image_path), size=size)
     except Exception:
         return None
 
@@ -117,14 +122,18 @@ hide_icon = _load_icon('hidden.png')
 show_icon = _load_icon('eye.png')
 
 # Function to load logo image with fallback
-def _load_logo(filenames=('images/logoo.png',)):
-    try:
-        img_pil = Image.open('images/logoo.png')
-        img_pil.thumbnail((120, 120))  
-        return ctk.CTkImage(img_pil, size=img_pil.size)
-    except Exception:
-        placeholder = Image.new('RGBA', (120, 120), ACCENT)  # Create a placeholder image with ACCENT color
-        return ctk.CTkImage(placeholder, size=(120, 120))
+def _load_logo(filenames=('logoo.png', 'logo.png')):
+    for name in filenames:
+        candidate = IMAGES_DIR / name
+        if candidate.exists():
+            try:
+                img_pil = Image.open(candidate)
+                img_pil.thumbnail((120, 120))
+                return ctk.CTkImage(img_pil, size=img_pil.size)
+            except Exception:
+                continue
+    placeholder = Image.new('RGBA', (120, 120), ACCENT)
+    return ctk.CTkImage(placeholder, size=(120, 120))
     
 # Header section with gradient-like layering
 header_container = ctk.CTkFrame(root, fg_color='transparent')

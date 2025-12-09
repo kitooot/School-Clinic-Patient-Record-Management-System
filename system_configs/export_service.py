@@ -88,6 +88,7 @@ def export_patient_analytics_pdf(
         'visits': 'Clinic Visits by Month'
     }
 
+# Temporary files to hold chart images
     temp_files: List[str] = []
     try:
         for key in ('gender', 'diagnosis', 'municipality', 'visits'):

@@ -1,13 +1,14 @@
 """Helpers for importing patient data from external files."""
-from __future__ import annotations
+from __future__ import annotations # Ensure compatibility with future Python versions
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple # For type hinting
 
-import pandas
-from pymysql.err import IntegrityError
+import pandas # For data manipulation
+from pymysql.err import IntegrityError # For handling database integrity errors
 
-from .helpers import normalize_column_name, normalize_mobile, to_proper_case
+from .helpers import normalize_column_name, normalize_mobile, to_proper_case # Importing helper functions
 
+# Define required columns mapping
 REQUIRED_COLUMNS = {
     'patient_id': 'patientid',
     'name': 'name',
@@ -20,6 +21,7 @@ REQUIRED_COLUMNS = {
     'visit_date': 'visitdate'
 }
 
+# Define field labels for error reporting
 FIELD_LABELS = {
     'patient_id': 'patient ID',
     'name': 'name',
@@ -32,6 +34,7 @@ FIELD_LABELS = {
     'visit_date': 'visit date'
 }
 
+# Import patient records from a DataFrame into the database.
 def import_patient_dataframe(data_frame: pandas.DataFrame, cursor, connection) -> Tuple[int, int, List[str]]:
     """Insert patient records from a prepared DataFrame.
 
