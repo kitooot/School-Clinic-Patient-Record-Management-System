@@ -70,7 +70,7 @@ def import_patient_dataframe(data_frame: pandas.DataFrame, cursor, connection) -
     error_samples: List[str] = []
 
     for idx, row in data_frame.iterrows():
-        excel_row = idx + 2  # account for header row
+        excel_row = idx + 2  # account for header row in Excel
         patient_id = get_value(row, 'patient_id')
         name = get_value(row, 'name')
         mobile = get_value(row, 'mobile')

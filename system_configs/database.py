@@ -19,8 +19,8 @@ def ensure_schema(cursor: pymysql.cursors.Cursor, connection: pymysql.connection
         'create table if not exists patient ('
         'patient_id varchar(30) primary key, '
         'name varchar(30), mobile varchar(30), email varchar(30), '
-        'address varchar(100), gender varchar(30), dob varchar(30), '
-        'diagnosis varchar(30), visit_date varchar(30)'
+        'address varchar(100), gender varchar(30), dob DATE, '
+        'diagnosis varchar(30), visit_date DATE'
         ')'
     )
     cursor.execute(
